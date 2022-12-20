@@ -2,8 +2,8 @@
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
 
-/* We want the symbol _start to be our entry point */
-ENTRY(_start)
+/* We want the symbol kernel_entry to be our entry point */
+ENTRY(kernel_entry)
 
 /* Define the program headers we want so the bootloader gives us the right */
 /* MMU permissions */
@@ -18,9 +18,9 @@ SECTIONS
 {
     /* We wanna be placed in the topmost 2GiB of the address space, for optimisations */
     /* and because that is what the Limine spec mandates. */
-    /* Any address in this region will do, but often 0xffffffff80000000 is chosen as */
+    /* Any address in this region will do, but often 0xffffffff80200000 is chosen as */
     /* that is the beginning of the region. */
-    . = 0xffffffff80000000;
+    . = 0xffffffff80200000;
 
     .text : {
         *(.text .text.*)
