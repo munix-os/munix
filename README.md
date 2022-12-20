@@ -1,6 +1,6 @@
 # Munix
 
-munix is my (new) attempt at writing a proper unix clone, without straying away for a month (or two)
+Munix is my (new) attempt at writing a proper unix clone, without straying away for a month (or two)
 to add completly unnecessary and complicated features.
 
 ## Building
@@ -16,4 +16,4 @@ $ # Kernel + HDD + UEFI
 $ make all-hdd && make run-hdd-uefi
 ```
 
-**NOTE: the latest stage 2/3 Zig compiler is required to build munix! (instructions [here](https://github.com/ziglang/zig/wiki/Building-Zig-From-Source))**
+**NOTE: The latest stage 2/3 Zig compiler is required to build Munix! (instructions [here](https://github.com/ziglang/zig/wiki/Building-Zig-From-Source))**
