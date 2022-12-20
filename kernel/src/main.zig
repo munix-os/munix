@@ -1,5 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
+const arch = @import("x86_64/arch.zig");
 const logger = std.log.scoped(.main);
 
 pub export var terminal_request: limine.TerminalRequest = .{};
@@ -35,6 +36,8 @@ pub fn log(
 
 export fn kernel_entry() callconv(.C) noreturn {
     logger.err("Hello from munix!", .{});
+    arch.setup_cpu();
+    logger.err("Init complete!", .{});
 
     while (true) {
         asm volatile ("hlt");
