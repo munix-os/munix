@@ -1,5 +1,7 @@
-override INTERNALZIGFLAGS := \
-	-fno-stage1              \
+.POSIX:
+
+INTERNALZIGFLAGS := \
+	-fno-stage1             \
 	-Drelease-safe=true
 
 .PHONY: all
