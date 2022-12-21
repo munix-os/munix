@@ -47,7 +47,7 @@ const GDT = struct {
 
 const gdt_table = GDT{};
 
-pub fn setup_cpu() void {
+pub fn setupCpu() void {
     logger.info("setting up GDT..", .{});
     gdt_table.load();
 }

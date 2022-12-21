@@ -34,9 +34,9 @@ pub fn log(
     }
 }
 
-export fn kernel_entry() callconv(.C) noreturn {
+export fn entry() callconv(.C) noreturn {
     logger.err("Hello from munix!", .{});
-    arch.setup_cpu();
+    arch.setupCpu();
     logger.err("Init complete!", .{});
 
     while (true) {
