@@ -1,5 +1,6 @@
 const logger = @import("std").log.scoped(.arch);
-const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
+pub const trap = @import("trap.zig");
+pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
 
 const GDT = struct {
     entries: [7]u64 = .{
@@ -26,7 +27,7 @@ const GDT = struct {
         };
 
         asm volatile (
-            \\lgdtq (%[gdtr])
+            \\lgdtq %[gdtr]
             \\push $0x28
             \\lea 1f(%%rip), %%rax
             \\push %%rax
@@ -39,7 +40,7 @@ const GDT = struct {
             \\mov %%eax, %%gs
             \\mov %%eax, %%ss
             :
-            : [gdtr] "r" (&gdtr),
+            : [gdtr] "*p" (&gdtr),
             : "rax", "rcx", "memory"
         );
     }
@@ -48,6 +49,7 @@ const GDT = struct {
 const gdt_table = GDT{};
 
 pub fn setupCpu() void {
-    logger.info("setting up GDT..", .{});
+    logger.info("performing early cpu init...", .{});
     gdt_table.load();
+    trap.init();
 }

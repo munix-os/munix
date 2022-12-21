@@ -35,9 +35,9 @@ pub fn log(
 }
 
 export fn entry() callconv(.C) noreturn {
-    logger.err("Hello from munix!", .{});
+    logger.info("hello from munix!", .{});
     arch.setupCpu();
-    logger.err("Init complete!", .{});
+    logger.warn("init complete, end of kernel reached!", .{});
 
     while (true) {
         asm volatile ("hlt");
