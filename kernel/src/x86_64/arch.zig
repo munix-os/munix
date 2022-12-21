@@ -1,14 +1,28 @@
 const logger = @import("std").log.scoped(.arch);
-
-const Descriptor = packed struct { size: u16, ptr: u64 };
+const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
 
 const GDT = struct {
-    entries: [7]u64,
+    entries: [7]u64 = .{
+        // null entry
+        0x0000000000000000,
 
-    pub fn load(self: GDT) void {
-        var gdtr = Descriptor{
+        // 16-bit kernel code/data
+        0x00009a000000ffff,
+        0x000093000000ffff,
+
+        // 32-bit kernel code/data
+        0x00cf9a000000ffff,
+        0x00cf93000000ffff,
+
+        // 64-bit kernel code/data
+        0x00af9b000000ffff,
+        0x00af93000000ffff,
+    },
+
+    pub fn load(self: *const GDT) void {
+        const gdtr = Descriptor{
             .size = @as(u16, @sizeOf(GDT) - 1),
-            .ptr = @ptrToInt(&self),
+            .ptr = @ptrToInt(self),
         };
 
         asm volatile (
@@ -26,31 +40,14 @@ const GDT = struct {
             \\mov %%eax, %%ss
             :
             : [gdtr] "r" (&gdtr),
-            : "rax", "memory"
+            : "rax", "rcx", "memory"
         );
     }
 };
 
+const gdt_table = GDT{};
+
 pub fn setup_cpu() void {
     logger.info("setting up GDT..", .{});
-
-    var gdt_table = GDT{
-        .entries = [_]u64{
-            // null entry
-            0x0000000000000000,
-
-            // 16-bit kernel code/data
-            0x00009a000000ffff,
-            0x000093000000ffff,
-
-            // 32-bit kernel code/data
-            0x00cf9a000000ffff,
-            0x00cf93000000ffff,
-
-            // 64-bit kernel code/data
-            0x00af9b000000ffff,
-            0x00af93000000ffff,
-        },
-    };
     gdt_table.load();
 }
