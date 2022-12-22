@@ -1,5 +1,6 @@
 const limine = @import("limine");
 const std = @import("std");
+const vmm = @import("root").vmm;
 
 const Bitmap = struct {
     bits: [*]u8,
@@ -67,7 +68,6 @@ const Bitmap = struct {
 
 // TODO(cleanbaja): move this constants somewhere else in the
 // next refactor (proably arch.zig)
-pub const HIGHER_HALF: u64 = 0xFFFF800000000000;
 pub const PAGE_SIZE = 4096;
 
 pub export var memmap_request: limine.MemoryMapRequest = .{};
@@ -109,7 +109,7 @@ pub fn init() void {
                 ent.base += n_bytes;
                 ent.length -= n_bytes;
 
-                global_bitmap.bits = @intToPtr([*]u8, ent.base + HIGHER_HALF);
+                global_bitmap.bits = @intToPtr([*]u8, vmm.toHigherHalf(ent.base));
                 global_bitmap.size = n_bytes;
             }
         }
@@ -125,7 +125,7 @@ pub fn init() void {
         }
 
         // finally, mark the bitmap itself as used
-        global_bitmap.markRange((@ptrToInt(global_bitmap.bits) - HIGHER_HALF) / PAGE_SIZE, n_bytes / PAGE_SIZE);
+        global_bitmap.markRange(vmm.fromHigherHalf(@ptrToInt(global_bitmap.bits)) / PAGE_SIZE, n_bytes / PAGE_SIZE);
     } else {
         sink.err("bootloader did not pass memory map!", .{});
         while (true) {}

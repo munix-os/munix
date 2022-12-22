@@ -1,8 +1,11 @@
 const std = @import("std");
 const limine = @import("limine");
-const arch = @import("x86_64/arch.zig");
-const pmm = @import("pmm.zig");
 const logger = std.log.scoped(.main);
+
+// modules
+pub const arch = @import("x86_64/arch.zig");
+pub const pmm = @import("pmm.zig");
+pub const vmm = @import("vmm.zig");
 
 pub export var terminal_request: limine.TerminalRequest = .{};
 var bytes: [16 * 4096]u8 = undefined;

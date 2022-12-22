@@ -64,7 +64,7 @@ pub fn setHandler(func: anytype, vec: u8) void {
 }
 
 pub fn init() void {
-    const idtr = @import("arch.zig").Descriptor{
+    const idtr = @import("root").arch.Descriptor{
         .size = @as(u16, (@sizeOf(Entry) * 256) - 1),
         .ptr = @ptrToInt(&entries),
     };
