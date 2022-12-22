@@ -1,6 +1,7 @@
 const std = @import("std");
 const limine = @import("limine");
 const arch = @import("x86_64/arch.zig");
+const pmm = @import("pmm.zig");
 const logger = std.log.scoped(.main);
 
 pub export var terminal_request: limine.TerminalRequest = .{};
@@ -37,6 +38,7 @@ pub fn log(
 export fn entry() callconv(.C) noreturn {
     logger.info("hello from munix!", .{});
     arch.setupCpu();
+    pmm.init();
     logger.warn("init complete, end of kernel reached!", .{});
 
     while (true) {
