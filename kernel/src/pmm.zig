@@ -39,11 +39,11 @@ const Bitmap = struct {
         var i: usize = std.mem.alignBackward(self.last_free, step_size);
 
         while (i < self.size * 8) : (i += step_size) {
-            if (self.check(i)) {
+            if (!self.check(i)) {
                 var found = find_pages: {
                     var j: usize = 1;
                     while (j < pages) : (j += 1) {
-                        if (!self.check(i + j)) {
+                        if (self.check(i + j)) {
                             break :find_pages false;
                         }
                     }
@@ -115,7 +115,7 @@ pub fn init() void {
         }
 
         // clear the bitmap to all 0xFFs (reserved)
-        @memset(global_bitmap.bits, std.math.maxInt(u8), n_bytes);
+        @memset(global_bitmap.bits, 0xFF, n_bytes);
 
         // mark usable ranges in the global_bitmap
         for (resp.entries()) |ent| {
@@ -132,12 +132,41 @@ pub fn init() void {
     }
 }
 
+pub fn mapGlobalBitmap() void {
+    var bitmap_base: usize = @ptrToInt(global_bitmap.bits);
+    var base: usize = std.mem.alignBackward(bitmap_base, 0x200000);
+    var flags: vmm.MapFlags = .{ .read = true, .write = true, .exec = false };
+    var i: usize = 0;
+
+    if (global_bitmap.size + bitmap_base < @intCast(usize, (0x800 * 0x200000))) {
+        return;
+    }
+
+    while (i < std.mem.alignForward(global_bitmap.size, 0x200000)) : (i += 0x200000) {
+        vmm.kernel_pagemap.mapPage(flags, base + i, vmm.fromHigherHalf(base + i), true);
+    }
+}
+
 pub fn allocPages(count: usize) ?u64 {
-    return global_bitmap.findFreeRange(count, 1) * PAGE_SIZE orelse null;
+    return result: {
+        if (global_bitmap.findFreeRange(count, 1)) |free_bit| {
+            @memset(@intToPtr([*]u8, vmm.toHigherHalf(free_bit * PAGE_SIZE)), 0, 0x1000 * count);
+            break :result free_bit * PAGE_SIZE;
+        } else {
+            break :result null;
+        }
+    };
 }
 
 pub fn allocHugePages(count: usize) ?u64 {
-    return global_bitmap.findFreeRange(count * 0x200, 0x200) * PAGE_SIZE orelse null;
+    return result: {
+        if (global_bitmap.findFreeRange(count * 0x200, 0x200)) |free_bit| {
+            @memset(@intToPtr([*]u8, vmm.toHigherHalf(free_bit * PAGE_SIZE)), 0, 0x200000 * count);
+            break :result free_bit * PAGE_SIZE;
+        } else {
+            break :result null;
+        }
+    };
 }
 
 pub fn freePages(ptr: usize, count: usize) void {

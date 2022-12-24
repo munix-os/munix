@@ -1,6 +1,9 @@
 const logger = @import("std").log.scoped(.arch);
-pub const trap = @import("trap.zig");
 pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
+
+// modules
+pub const trap = @import("trap.zig");
+pub const paging = @import("paging.zig");
 
 const GDT = struct {
     entries: [7]u64 = .{
