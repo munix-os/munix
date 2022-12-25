@@ -81,9 +81,9 @@ pub fn init() void {
 
 fn handleIrq(frame: *TrapFrame) callconv(.C) void {
     const log = @import("std").log.scoped(.trap).err;
-    log("unhandled IRQ!!! (cpu vec #{})", .{frame.vec});
+    log("CPU triggered IRQ #{}, which has no handler!", .{frame.vec});
 
-    while (true) {}
+    @panic("unhandled IRQ!!!");
 }
 
 fn handleException(frame: *TrapFrame) callconv(.C) void {
@@ -91,7 +91,9 @@ fn handleException(frame: *TrapFrame) callconv(.C) void {
     log("CPU Exception #{}: ", .{frame.vec});
     frame.dump(log);
 
-    while (true) {}
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
 
 fn genStubTable() [256]TrapStub {

@@ -127,8 +127,7 @@ pub fn init() void {
         // finally, mark the bitmap itself as used
         global_bitmap.markRange(vmm.fromHigherHalf(@ptrToInt(global_bitmap.bits)) / PAGE_SIZE, n_bytes / PAGE_SIZE);
     } else {
-        sink.err("bootloader did not pass memory map!", .{});
-        while (true) {}
+        @panic("bootloader did not pass memory map!");
     }
 }
 
