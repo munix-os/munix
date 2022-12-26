@@ -4,6 +4,7 @@ const logger = std.log.scoped(.main);
 
 // modules
 pub const arch = @import("x86_64/arch.zig");
+pub const acpi = @import("acpi.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 
@@ -71,6 +72,7 @@ export fn entry() callconv(.C) noreturn {
     arch.setupCpu();
     pmm.init();
     vmm.init();
+    acpi.init();
 
     @panic("init complete, end of kernel reached!");
 }
