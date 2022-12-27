@@ -39,6 +39,13 @@ fn getEntries(comptime T: type, header: *Header) []align(1) const T {
 }
 
 fn printTable(sdt: *Header) void {
+    // real hw systems are packed with SSDT tables (upwards of 14)
+    // beacuse of this, skip printing SSDTs so the kernel logs
+    // aren't cluttered
+    if (std.mem.eql(u8, "SSDT", &sdt.signature)) {
+        return;
+    }
+
     // zig fmt: off
     sink.info("\t* [{s}]: 0x{X:0>16}, Length: {d:0>3}, Revision: {}", .{
         sdt.signature, @ptrToInt(sdt), sdt.length, sdt.revision
@@ -49,10 +56,11 @@ fn printTable(sdt: *Header) void {
 fn mapTable(base: u64, length: usize) void {
     var aligned_base: u64 = std.mem.alignBackward(base, 0x200000);
     var aligned_length: usize = std.mem.alignForward(length, 0x200000);
-    var table_flags = vmm.MapFlags{ .read = true };
+    var table_flags = vmm.MapFlags{ .read = true, .cache_type = .uncached };
 
     var i: usize = 0;
     while (i < aligned_length) : (i += 0x200000) {
+        vmm.kernel_pagemap.unmapPage(aligned_base + i);
         vmm.kernel_pagemap.mapPage(table_flags, aligned_base + i, vmm.fromHigherHalf(aligned_base + i), true);
     }
 }
@@ -79,7 +87,7 @@ pub fn getTable(signature: []const u8) ?*Header {
 
 pub fn init() void {
     if (rsdp_request.response) |resp| {
-        var xsdp: *XSDP = @ptrCast(*XSDP, @alignCast(@alignOf(*XSDP), resp.address));
+        var xsdp = @intToPtr(*align(1) const XSDP, @ptrToInt(resp.address));
         mapTable(@ptrToInt(xsdp), xsdp.length);
 
         if (xsdp.revision >= 2 and xsdp.xsdt != 0) {

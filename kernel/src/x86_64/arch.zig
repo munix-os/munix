@@ -1,12 +1,15 @@
 const logger = @import("std").log.scoped(.arch);
-pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
+const std = @import("std");
 
 // modules
 pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
 
-const GDT = struct {
-    entries: [7]u64 = .{
+// exports
+pub var ic = @import("lapic.zig").LapicController{};
+
+const GDT = extern struct {
+    entries: [7]u64 align(1) = .{
         // null entry
         0x0000000000000000,
 
@@ -25,7 +28,7 @@ const GDT = struct {
 
     pub fn load(self: *const GDT) void {
         const gdtr = Descriptor{
-            .size = @as(u16, @sizeOf(GDT) - 1),
+            .size = @sizeOf(GDT) - 1,
             .ptr = @ptrToInt(self),
         };
 
@@ -49,6 +52,29 @@ const GDT = struct {
     }
 };
 
+pub fn rdmsr(reg: u64) u64 {
+    var low: u32 = undefined;
+    var high: u32 = undefined;
+
+    asm volatile ("rdmsr"
+        : [_] "={eax}" (low),
+          [_] "={edx}" (high),
+        : [_] "{ecx}" (reg),
+    );
+
+    return @as(u64, low) | (@as(u64, high) << 32);
+}
+
+pub fn wrmsr(reg: u64, val: u64) void {
+    asm volatile ("wrmsr"
+        :
+        : [_] "{eax}" (val & 0xFFFFFFFF),
+          [_] "{edx}" (val >> 32),
+          [_] "{ecx}" (reg),
+    );
+}
+
+pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
 const gdt_table = GDT{};
 
 pub fn setupCpu() void {

@@ -34,6 +34,32 @@ pub const PageMap = struct {
             root[indices[3]] = createPte(flags, phys, false);
         }
     }
+
+    pub fn unmapPage(self: *PageMap, virt: u64) void {
+        var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
+
+        // zig fmt: off
+        var indices: [4]u64 = [_]u64{
+            genIndex(virt, 39), genIndex(virt, 30),
+            genIndex(virt, 21), genIndex(virt, 12)
+        };
+        // zig fmt: on
+
+        // perform translation to pte
+        // TODO(cleanbaja): don't just unwrap (handle the case of a OOM)
+        root = getNextLevel(root, indices[0], true).?;
+        root = getNextLevel(root, indices[1], true).?;
+
+        //@import("std").log.info("root is {X:0>16}, indices2 is {X:0>16}, actual data is {X:0>16}", .{ @ptrToInt(root), indices[2] });
+        if ((root[indices[2]] & (1 << 7)) != 0) {
+            root[indices[2]] &= ~@intCast(u64, 1);
+        } else {
+            root = getNextLevel(root, indices[2], true).?;
+            root[indices[3]] &= ~@intCast(u64, 1);
+        }
+
+        invalidatePage(virt);
+    }
 };
 
 inline fn genIndex(virt: u64, comptime shift: usize) u64 {

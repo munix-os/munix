@@ -105,7 +105,7 @@ pub fn init() void {
 
         // find a entry that can hold the bitmap
         for (resp.entries()) |ent| {
-            if (ent.length > n_bytes) {
+            if (ent.length > n_bytes and ent.kind == .usable) {
                 ent.base += n_bytes;
                 ent.length -= n_bytes;
 

@@ -73,6 +73,7 @@ export fn entry() callconv(.C) noreturn {
     pmm.init();
     vmm.init();
     acpi.init();
+    arch.ic.setup();
 
     @panic("init complete, end of kernel reached!");
 }
