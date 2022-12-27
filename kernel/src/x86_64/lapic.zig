@@ -44,11 +44,11 @@ pub const LapicController = struct {
     }
 
     pub fn read(self: *LapicController, reg: u32) u32 {
-        return @intToPtr(*u32, self.mmio_base + reg).*;
+        return @intToPtr(*volatile u32, self.mmio_base + reg).*;
     }
 
     pub fn write(self: *LapicController, reg: u32, value: u32) void {
-        @intToPtr(*u32, self.mmio_base + reg).* = value;
+        @intToPtr(*volatile u32, self.mmio_base + reg).* = value;
     }
 
     pub fn submitEoi(self: *LapicController, irq: u8) void {
