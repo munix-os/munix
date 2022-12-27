@@ -33,7 +33,7 @@ const GDT = extern struct {
         };
 
         asm volatile (
-            \\lgdtq %[gdtr]
+            \\lgdt %[gdtr]
             \\push $0x28
             \\lea 1f(%%rip), %%rax
             \\push %%rax
@@ -75,7 +75,7 @@ pub fn wrmsr(reg: u64, val: u64) void {
 }
 
 pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
-const gdt_table = GDT{};
+var gdt_table = GDT{};
 
 pub fn setupCpu() void {
     logger.info("performing early cpu init...", .{});
