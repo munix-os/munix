@@ -13,6 +13,22 @@ pub export var terminal_request: limine.TerminalRequest = .{};
 var log_buffer: [16 * 4096]u8 = undefined;
 var limine_terminal_cr3: u64 = 0;
 
+pub var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
+pub var allocator = g_alloc.allocator();
+
+pub const os = .{
+    .heap = .{
+        .page_allocator = std.mem.Allocator{
+            .ptr = &pmm.page_allocator,
+            .vtable = &std.mem.Allocator.VTable{
+                .alloc = pmm.PageAllocator.alloc,
+                .resize = pmm.PageAllocator.resize,
+                .free = pmm.PageAllocator.free,
+            },
+        },
+    },
+};
+
 pub fn log(
     comptime level: std.log.Level,
     comptime scope: anytype,

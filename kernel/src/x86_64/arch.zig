@@ -9,9 +9,9 @@ pub const paging = @import("paging.zig");
 pub var ic = @import("lapic.zig").LapicController{};
 
 pub const Irql = enum(u4) {
-    critical,
-    sched,
-    passive,
+    critical = 15,
+    sched = 14,
+    passive = 0,
 };
 
 pub fn setIrql(level: Irql) void {
@@ -101,4 +101,6 @@ pub fn setupCpu() void {
     logger.info("performing early cpu init...", .{});
     gdt_table.load();
     trap.init();
+
+    setIrql(.passive);
 }

@@ -66,11 +66,62 @@ const Bitmap = struct {
     }
 };
 
+pub const PageAllocator = struct {
+    base: u64 = 0xFFFF_EA00_0000_0000,
+
+    pub fn alloc(ptr: *anyopaque, len: usize, ptr_a: u29, len_a: u29, ret: usize) std.mem.Allocator.Error![]u8 {
+        _ = ptr_a;
+        _ = len_a;
+        _ = ret;
+
+        const pages = std.mem.alignForward(len, PAGE_SIZE);
+        const self = @ptrCast(*PageAllocator, @alignCast(8, ptr));
+        const old_base = self.base;
+
+        var i: usize = 0;
+        var map_flags = vmm.MapFlags{ .write = true };
+
+        while (i < pages) : (i += 1) {
+            const page = allocPages(1) orelse return error.OutOfMemory;
+
+            vmm.kernel_pagemap.mapPage(
+                map_flags,
+                old_base + i * PAGE_SIZE,
+                page,
+                false,
+            );
+        }
+
+        self.base += pages * PAGE_SIZE;
+
+        return @ptrCast([*]u8, @intToPtr(*u8, old_base))[0..len];
+    }
+
+    pub fn resize(ptr: *anyopaque, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+        _ = ptr;
+        _ = buf;
+        _ = buf_align;
+        _ = new_len;
+        _ = len_align;
+        _ = ret_addr;
+
+        return null;
+    }
+
+    pub fn free(ptr: *anyopaque, buf: []u8, buf_align: u29, ret_addr: usize) void {
+        _ = ptr;
+        _ = buf;
+        _ = buf_align;
+        _ = ret_addr;
+    }
+};
+
 // TODO(cleanbaja): move this constants somewhere else in the
 // next refactor (proably arch.zig)
 pub const PAGE_SIZE = 4096;
 
 pub export var memmap_request: limine.MemoryMapRequest = .{};
+pub var page_allocator = PageAllocator{};
 var global_bitmap: Bitmap = undefined;
 var pmm_lock = @import("root").smp.SpinLock{};
 
@@ -148,8 +199,8 @@ pub fn mapGlobalBitmap() void {
 }
 
 pub fn allocPages(count: usize) ?u64 {
-    var irql = pmm_lock.ilock();
-    defer pmm_lock.irel(irql);
+    pmm_lock.acq();
+    defer pmm_lock.rel();
 
     return result: {
         if (global_bitmap.findFreeRange(count, 1)) |free_bit| {
@@ -162,8 +213,8 @@ pub fn allocPages(count: usize) ?u64 {
 }
 
 pub fn allocHugePages(count: usize) ?u64 {
-    var irql = pmm_lock.ilock();
-    defer pmm_lock.irel(irql);
+    pmm_lock.acq();
+    defer pmm_lock.rel();
 
     return result: {
         if (global_bitmap.findFreeRange(count * 0x200, 0x200)) |free_bit| {
@@ -176,8 +227,8 @@ pub fn allocHugePages(count: usize) ?u64 {
 }
 
 pub fn freePages(ptr: usize, count: usize) void {
-    var irql = pmm_lock.ilock();
-    defer pmm_lock.irel(irql);
+    pmm_lock.acq();
+    defer pmm_lock.rel();
 
     global_bitmap.clearRange(ptr / PAGE_SIZE, count);
 }

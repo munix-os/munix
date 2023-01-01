@@ -15,9 +15,10 @@ pub const PageMap = struct {
     }
 
     pub fn mapPage(self: *PageMap, flags: vmm.MapFlags, virt: u64, phys: u64, huge: bool) void {
-        var irql = self.lock.ilock();
         var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
-        defer self.lock.irel(irql);
+
+        self.lock.acq();
+        defer self.lock.rel();
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{
@@ -40,9 +41,10 @@ pub const PageMap = struct {
     }
 
     pub fn unmapPage(self: *PageMap, virt: u64) void {
-        var irql = self.lock.ilock();
         var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
-        defer self.lock.irel(irql);
+
+        self.lock.acq();
+        defer self.lock.rel();
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{
