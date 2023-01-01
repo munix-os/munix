@@ -8,6 +8,26 @@ pub const paging = @import("paging.zig");
 // exports
 pub var ic = @import("lapic.zig").LapicController{};
 
+pub const Irql = enum(u4) {
+    critical,
+    sched,
+    passive,
+};
+
+pub fn setIrql(level: Irql) void {
+    asm volatile ("mov %[irql], %%cr8\n"
+        :
+        : [irql] "r" (@as(u64, @enumToInt(level))),
+        : "memory"
+    );
+}
+
+pub fn getIrql() Irql {
+    return @intToEnum(Irql, asm volatile ("mov %%cr8, %[irql]"
+        : [irql] "=r" (-> u64),
+    ));
+}
+
 const GDT = extern struct {
     entries: [7]u64 align(1) = .{
         // null entry

@@ -72,6 +72,7 @@ pub const PAGE_SIZE = 4096;
 
 pub export var memmap_request: limine.MemoryMapRequest = .{};
 var global_bitmap: Bitmap = undefined;
+var pmm_lock = @import("root").smp.SpinLock{};
 
 fn getKindName(kind: anytype) []const u8 {
     return switch (kind) {
@@ -147,6 +148,9 @@ pub fn mapGlobalBitmap() void {
 }
 
 pub fn allocPages(count: usize) ?u64 {
+    var irql = pmm_lock.ilock();
+    defer pmm_lock.irel(irql);
+
     return result: {
         if (global_bitmap.findFreeRange(count, 1)) |free_bit| {
             @memset(@intToPtr([*]u8, vmm.toHigherHalf(free_bit * PAGE_SIZE)), 0, 0x1000 * count);
@@ -158,6 +162,9 @@ pub fn allocPages(count: usize) ?u64 {
 }
 
 pub fn allocHugePages(count: usize) ?u64 {
+    var irql = pmm_lock.ilock();
+    defer pmm_lock.irel(irql);
+
     return result: {
         if (global_bitmap.findFreeRange(count * 0x200, 0x200)) |free_bit| {
             @memset(@intToPtr([*]u8, vmm.toHigherHalf(free_bit * PAGE_SIZE)), 0, 0x200000 * count);
@@ -169,5 +176,8 @@ pub fn allocHugePages(count: usize) ?u64 {
 }
 
 pub fn freePages(ptr: usize, count: usize) void {
+    var irql = pmm_lock.ilock();
+    defer pmm_lock.irel(irql);
+
     global_bitmap.clearRange(ptr / PAGE_SIZE, count);
 }

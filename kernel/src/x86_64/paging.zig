@@ -1,8 +1,10 @@
 const vmm = @import("root").vmm;
 const pmm = @import("root").pmm;
+const smp = @import("root").smp;
 
 pub const PageMap = struct {
     root: u64 = undefined,
+    lock: smp.SpinLock = .{},
 
     pub fn load(self: *PageMap) void {
         loadSpace(self.root);
@@ -13,7 +15,9 @@ pub const PageMap = struct {
     }
 
     pub fn mapPage(self: *PageMap, flags: vmm.MapFlags, virt: u64, phys: u64, huge: bool) void {
+        var irql = self.lock.ilock();
         var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
+        defer self.lock.irel(irql);
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{
@@ -36,7 +40,9 @@ pub const PageMap = struct {
     }
 
     pub fn unmapPage(self: *PageMap, virt: u64) void {
+        var irql = self.lock.ilock();
         var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
+        defer self.lock.irel(irql);
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{
@@ -50,7 +56,6 @@ pub const PageMap = struct {
         root = getNextLevel(root, indices[0], true).?;
         root = getNextLevel(root, indices[1], true).?;
 
-        //@import("std").log.info("root is {X:0>16}, indices2 is {X:0>16}, actual data is {X:0>16}", .{ @ptrToInt(root), indices[2] });
         if ((root[indices[2]] & (1 << 7)) != 0) {
             root[indices[2]] &= ~@intCast(u64, 1);
         } else {

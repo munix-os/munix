@@ -7,6 +7,7 @@ pub const arch = @import("x86_64/arch.zig");
 pub const acpi = @import("acpi.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
+pub const smp = @import("smp.zig");
 
 pub export var terminal_request: limine.TerminalRequest = .{};
 var log_buffer: [16 * 4096]u8 = undefined;
