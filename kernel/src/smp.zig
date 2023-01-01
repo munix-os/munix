@@ -11,20 +11,18 @@ pub const SpinLock = struct {
         _ = self.refcount.fetchAdd(1, .Monotonic);
 
         while (true) {
-            // ----------------------------------------------
+            // ------------------------------------------------
             // x86 Instruction | Micro ops | Base Latency
-            // ----------------------------------------------
+            // ------------------------------------------------
             // XCHG                  8           23
             // LOCK XADD             9           18
             // LOCK CMPXCHG          10          18
             // LOCK CMPXCHG8B        20          19
-            // ----------------------------------------------
-            // According to the above table, the XCHG
-            // instruction takes the fewest amount of micro
-            // ops to complete, yet it has the highest base
-            // latency. Since lower micro ops is the goal
-            // here, I chose to go with XCHG.
-            // ----------------------------------------------
+            // ------------------------------------------------
+            // We're optimizing for micro ops, since base
+            // latency isn't consistent across CPU families.
+            // Therefore, we go with the XCHG instruction...
+            // ------------------------------------------------
             // Source: https://agner.org/optimize/instruction_tables.pdf
             if (self.lock_bits.swap(1, .Acquire) == 0) {
                 // 'self.lock_bits.swap' translates to a XCHG
@@ -37,10 +35,6 @@ pub const SpinLock = struct {
         }
 
         _ = self.refcount.fetchSub(1, .Monotonic);
-
-        // TODO(cleanbaja): determine whether a fence here is required, since
-        // it has slight performance implications
-        self.refcount.fence(.Acquire);
     }
 
     pub fn ilock(self: *SpinLock) u16 {
