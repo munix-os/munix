@@ -8,6 +8,7 @@ pub const acpi = @import("acpi.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
+pub const sched = @import("sched.zig");
 
 pub export var terminal_request: limine.TerminalRequest = .{};
 var log_buffer: [16 * 4096]u8 = undefined;
@@ -86,15 +87,28 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
     }
 }
 
+fn handleTimer(frame: *arch.trap.TrapFrame) callconv(.C) void {
+    _ = frame;
+    logger.info("ping!", .{});
+    arch.ic.submitEoi(0x30);
+    arch.ic.oneshot(0x30, 1000);
+}
+
 export fn entry() callconv(.C) noreturn {
     limine_terminal_cr3 = arch.paging.saveSpace();
     logger.info("hello from munix!", .{});
 
+    // setup the essentials
     arch.setupCpu();
     pmm.init();
     vmm.init();
     acpi.init();
-    smp.init();
 
-    @panic("init complete, end of kernel reached!");
+    // boot all other cores, before entering the scheduler with them
+    arch.trap.setHandler(sched.reschedule, 0x30);
+    smp.init();
+    logger.err("init complete, end of kernel reached!", .{});
+    sched.enter();
+
+    while (true) {}
 }

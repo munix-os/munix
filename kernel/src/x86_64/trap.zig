@@ -41,11 +41,11 @@ const Entry = packed struct {
     offset_high: u32,
     reserved: u32 = 0,
 
-    fn fromPtr(ptr: u64) Entry {
+    fn fromPtr(ptr: u64, ist: u8) Entry {
         return Entry{
             .offset_low = @truncate(u16, ptr),
             .selector = 0x28,
-            .ist = 0,
+            .ist = ist,
             .flags = 0x8e,
             .offset_mid = @truncate(u16, ptr >> 16),
             .offset_high = @truncate(u32, ptr >> 32),
@@ -77,7 +77,11 @@ pub fn load() void {
 
 pub fn init() void {
     for (genStubTable()) |stub, idx| {
-        entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)));
+        if (idx == @import("root").sched.TIMER_VECTOR) {
+            entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 1);
+        } else {
+            entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
+        }
     }
 
     load();
@@ -182,7 +186,7 @@ fn makeStub(comptime vec: u8) TrapStub {
                 \\pop %r13
                 \\pop %r14
                 \\pop %r15
-                \\add $8, %rsp
+                \\add $16, %rsp
 
                 // swap back to user gs (if needed)
                 \\cmpq $0x4b, 8(%rsp)

@@ -8,8 +8,6 @@ const sink = std.log.scoped(.apic);
 pub const LapicController = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
     ext_space_capable: bool = false,
-    ap_init_mode: bool = false,
-    lock: smp.SpinLock = .{},
 
     // general regs
     const REG_VER = 0x30;
@@ -77,7 +75,7 @@ pub const LapicController = struct {
         acpi.pmSleep(10);
 
         // set the frequency, then set the timer back to a disabled state
-        smp.getCoreInfo().cpu_freq = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
+        smp.getCoreInfo().ticks_per_ms = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
         self.write(REG_TIMER_INIT, 0);
         self.write(REG_TIMER_LVT, (1 << 16));
     }
@@ -88,5 +86,16 @@ pub const LapicController = struct {
         } else {
             self.write(REG_EOI, 0);
         }
+    }
+
+    pub fn oneshot(self: *LapicController, vec: u8, ms: u64) void {
+        // stop the timer
+        self.write(REG_TIMER_INIT, 0);
+        self.write(REG_TIMER_LVT, (1 << 16));
+
+        // set the deadline, and off we go!
+        var deadline = @truncate(u32, smp.getCoreInfo().ticks_per_ms * ms);
+        self.write(REG_TIMER_LVT, vec);
+        self.write(REG_TIMER_INIT, deadline);
     }
 };

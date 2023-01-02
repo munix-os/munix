@@ -1,6 +1,7 @@
 const limine = @import("limine");
 const target = @import("builtin").target;
 const atomic = @import("std").atomic;
+const sched = @import("root").sched;
 const arch = @import("root").arch;
 const vmm = @import("root").vmm;
 
@@ -76,7 +77,9 @@ pub const SpinLock = struct {
 pub const CoreInfo = struct {
     processor_id: u32,
     lapic_id: u32,
-    cpu_freq: u64,
+    ticks_per_ms: u64 = 0,
+    tss: arch.TSS = .{},
+    cur_thread: ?*sched.Thread = null,
 };
 
 pub inline fn getCoreInfo() *CoreInfo {
@@ -106,18 +109,30 @@ var booted_cores: AtomicType(u16) = .{ .value = 1 };
 
 fn createCoreInfo(info: *limine.SmpInfo) void {
     var coreinfo = @import("root").allocator.alloc(CoreInfo, 1) catch unreachable;
-    coreinfo[0].lapic_id = info.lapic_id;
-    coreinfo[0].processor_id = info.processor_id;
+
+    coreinfo[0] = .{
+        .lapic_id = info.lapic_id,
+        .processor_id = info.processor_id,
+    };
+
     setCoreInfo(&coreinfo[0]);
 }
 
 pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
+    // setup the important stuff
     arch.setupAP();
     vmm.kernel_pagemap.load();
     createCoreInfo(info);
     arch.ic.enable();
 
+    // load the TSS
+    getCoreInfo().tss = @import("std").mem.zeroInit(arch.TSS, arch.TSS{});
+    getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
+    arch.loadTSS(&getCoreInfo().tss);
+
+    // let BSP know we're done, then off we go!
     _ = booted_cores.fetchAdd(1, .Monotonic);
+    sched.enter();
     while (true) {}
 }
 
@@ -128,6 +143,12 @@ pub fn init() void {
         for (resp.cpus()) |cpu| {
             if (cpu.lapic_id == resp.bsp_lapic_id) {
                 createCoreInfo(cpu);
+
+                // load the TSS
+                getCoreInfo().tss = @import("std").mem.zeroInit(arch.TSS, arch.TSS{});
+                getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
+                arch.loadTSS(&getCoreInfo().tss);
+
                 arch.ic.setup();
                 continue;
             }
