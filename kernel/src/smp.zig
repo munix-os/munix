@@ -108,14 +108,12 @@ pub export var smp_request: limine.SmpRequest = .{};
 var booted_cores: AtomicType(u16) = .{ .value = 1 };
 
 fn createCoreInfo(info: *limine.SmpInfo) void {
-    var coreinfo = @import("root").allocator.alloc(CoreInfo, 1) catch unreachable;
+    var coreinfo = @import("root").allocator.create(CoreInfo) catch unreachable;
 
-    coreinfo[0] = .{
-        .lapic_id = info.lapic_id,
-        .processor_id = info.processor_id,
-    };
+    coreinfo.lapic_id = info.lapic_id;
+    coreinfo.processor_id = info.processor_id;
 
-    setCoreInfo(&coreinfo[0]);
+    setCoreInfo(coreinfo);
 }
 
 pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {

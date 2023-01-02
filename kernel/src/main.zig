@@ -87,13 +87,6 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
     }
 }
 
-fn handleTimer(frame: *arch.trap.TrapFrame) callconv(.C) void {
-    _ = frame;
-    logger.info("ping!", .{});
-    arch.ic.submitEoi(0x30);
-    arch.ic.oneshot(0x30, 1000);
-}
-
 export fn entry() callconv(.C) noreturn {
     limine_terminal_cr3 = arch.paging.saveSpace();
     logger.info("hello from munix!", .{});

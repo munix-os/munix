@@ -5,10 +5,12 @@ const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
 const std = @import("std");
 
+const allocator = @import("root").allocator;
+
 pub const Thread = struct {
     id: usize,
     context: trap.TrapFrame,
-    node: std.TailQueue(void).Node,
+    node: std.TailQueue(void).Node = undefined,
 };
 
 pub const TIMER_VECTOR = 0x30;
@@ -33,10 +35,17 @@ fn getNextThread() *Thread {
 
 pub fn createKernelStack() ?u64 {
     if (pmm.allocPages(4)) |page| {
-        return vmm.toHigherHalf(page);
+        return vmm.toHigherHalf(page + 4 * pmm.PAGE_SIZE);
     } else {
         return null;
     }
+}
+
+pub fn exit() noreturn {
+    smp.getCoreInfo().cur_thread = null;
+
+    arch.ic.oneshot(TIMER_VECTOR, 1);
+    while (true) {}
 }
 
 pub fn reschedule(frame: *trap.TrapFrame) callconv(.C) void {
