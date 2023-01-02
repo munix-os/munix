@@ -1,21 +1,23 @@
 .POSIX:
 .PHONY: all all-hdd run run-uefi run-hdd run-hdd-uefi
 
+QEMU_COMMON_FLAGS = -M q35 -m 2G -smp 2
+
 all: munix.iso
 
 all-hdd: munix.hdd
 
 run: munix.iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom munix.iso
+	qemu-system-x86_64 $(QEMU_COMMON_FLAGS) -cdrom munix.iso
 
 run-uefi: ovmf-x64 munix.iso
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -cdrom munix.iso
+	qemu-system-x86_64 $(QEMU_COMMON_FLAGS) -bios ovmf-x64/OVMF.fd -cdrom munix.iso
 
 run-hdd: munix.hdd
-	qemu-system-x86_64 -M q35 -m 2G -hda munix.hdd
+	qemu-system-x86_64 $(QEMU_COMMON_FLAGS) -hda munix.hdd
 
 run-hdd-uefi: ovmf-x64 munix.hdd
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -hda munix.hdd
+	qemu-system-x86_64 $(QEMU_COMMON_FLAGS) -bios ovmf-x64/OVMF.fd -hda munix.hdd
 
 ovmf-x64:
 	mkdir -p ovmf-x64

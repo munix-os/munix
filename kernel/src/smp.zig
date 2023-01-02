@@ -1,5 +1,11 @@
+const limine = @import("limine");
+const target = @import("builtin").target;
 const atomic = @import("std").atomic;
 const arch = @import("root").arch;
+const vmm = @import("root").vmm;
+
+const allocator = @import("root").allocator;
+const sink = @import("std").log.scoped(.smp);
 const AtomicType = atomic.Atomic;
 
 pub const SpinLock = struct {
@@ -7,7 +13,6 @@ pub const SpinLock = struct {
     refcount: AtomicType(usize) = .{ .value = 0 },
     lock_level: arch.Irql = .critical,
     level: arch.Irql = undefined,
-    holder: i32 = -1,
 
     pub fn acq(self: *SpinLock) void {
         _ = self.refcount.fetchAdd(1, .Monotonic);
@@ -67,3 +72,69 @@ pub const SpinLock = struct {
         self.rel();
     }
 };
+
+pub const CoreInfo = struct {
+    processor_id: u32,
+    lapic_id: u32,
+    cpu_freq: u64,
+};
+
+pub inline fn getCoreInfo() *CoreInfo {
+    switch (target.cpu.arch) {
+        .x86_64 => {
+            return @intToPtr(*CoreInfo, arch.rdmsr(0xC0000101));
+        },
+        else => {
+            @compileError("unsupported arch " ++ @tagName(target.cpu.arch) ++ "!");
+        },
+    }
+}
+
+pub inline fn setCoreInfo(ptr: *CoreInfo) void {
+    switch (target.cpu.arch) {
+        .x86_64 => {
+            arch.wrmsr(0xC0000101, @ptrToInt(ptr));
+        },
+        else => {
+            @compileError("unsupported arch " ++ @tagName(target.cpu.arch) ++ "!");
+        },
+    }
+}
+
+pub export var smp_request: limine.SmpRequest = .{};
+var booted_cores: AtomicType(u16) = .{ .value = 1 };
+
+fn createCoreInfo(info: *limine.SmpInfo) void {
+    var coreinfo = @import("root").allocator.alloc(CoreInfo, 1) catch unreachable;
+    coreinfo[0].lapic_id = info.lapic_id;
+    coreinfo[0].processor_id = info.processor_id;
+    setCoreInfo(&coreinfo[0]);
+}
+
+pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
+    arch.setupAP();
+    vmm.kernel_pagemap.load();
+    createCoreInfo(info);
+    arch.ic.enable();
+
+    _ = booted_cores.fetchAdd(1, .Monotonic);
+    while (true) {}
+}
+
+pub fn init() void {
+    if (smp_request.response) |resp| {
+        sink.info("booting {} cores...", .{resp.cpu_count});
+
+        for (resp.cpus()) |cpu| {
+            if (cpu.lapic_id == resp.bsp_lapic_id) {
+                createCoreInfo(cpu);
+                arch.ic.setup();
+                continue;
+            }
+
+            cpu.goto_address = &ap_entry;
+        }
+
+        while (booted_cores.load(.Monotonic) != resp.cpu_count) {}
+    }
+}

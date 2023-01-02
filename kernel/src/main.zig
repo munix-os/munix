@@ -11,6 +11,7 @@ pub const smp = @import("smp.zig");
 
 pub export var terminal_request: limine.TerminalRequest = .{};
 var log_buffer: [16 * 4096]u8 = undefined;
+var log_lock = smp.SpinLock{};
 var limine_terminal_cr3: u64 = 0;
 
 pub var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
@@ -35,6 +36,9 @@ pub fn log(
     comptime fmt: []const u8,
     args: anytype,
 ) void {
+    log_lock.acq();
+    defer log_lock.rel();
+
     var buffer = std.io.fixedBufferStream(&log_buffer);
     var writer = buffer.writer();
 
@@ -90,7 +94,7 @@ export fn entry() callconv(.C) noreturn {
     pmm.init();
     vmm.init();
     acpi.init();
-    arch.ic.setup();
+    smp.init();
 
     @panic("init complete, end of kernel reached!");
 }

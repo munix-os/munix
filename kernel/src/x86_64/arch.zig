@@ -97,10 +97,15 @@ pub fn wrmsr(reg: u64, val: u64) void {
 pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
 var gdt_table = GDT{};
 
+pub fn setupAP() void {
+    gdt_table.load();
+    trap.load();
+    setIrql(.passive);
+}
+
 pub fn setupCpu() void {
     logger.info("performing early cpu init...", .{});
-    gdt_table.load();
     trap.init();
 
-    setIrql(.passive);
+    setupAP();
 }

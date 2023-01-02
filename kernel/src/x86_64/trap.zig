@@ -63,20 +63,24 @@ pub fn setHandler(func: anytype, vec: u8) void {
     handlers[vec] = func;
 }
 
-pub fn init() void {
+pub fn load() void {
     const idtr = @import("root").arch.Descriptor{
         .size = @as(u16, (@sizeOf(Entry) * 256) - 1),
         .ptr = @ptrToInt(&entries),
     };
 
-    for (genStubTable()) |stub, idx| {
-        entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)));
-    }
-
     asm volatile ("lidt %[idtr]"
         :
         : [idtr] "*p" (&idtr),
     );
+}
+
+pub fn init() void {
+    for (genStubTable()) |stub, idx| {
+        entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)));
+    }
+
+    load();
 }
 
 fn handleIrq(frame: *TrapFrame) callconv(.C) void {

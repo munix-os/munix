@@ -1,17 +1,26 @@
 const std = @import("std");
 const acpi = @import("root").acpi;
 const vmm = @import("root").vmm;
+const smp = @import("root").smp;
 const arch = @import("root").arch;
 const sink = std.log.scoped(.apic);
 
 pub const LapicController = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
     ext_space_capable: bool = false,
+    ap_init_mode: bool = false,
+    lock: smp.SpinLock = .{},
 
     // general regs
     const REG_VER = 0x30;
     const REG_EOI = 0xB0;
     const REG_SPURIOUS = 0xF0;
+
+    // timer regs
+    const REG_TIMER_LVT = 0x320;
+    const REG_TIMER_INIT = 0x380;
+    const REG_TIMER_CNT = 0x390;
+    const REG_TIMER_DIV = 0x3E0;
 
     // extended apic regs
     const REG_EAC_CONTROL = 0x410;
@@ -33,14 +42,9 @@ pub const LapicController = struct {
         if ((self.read(REG_VER) & (1 << 31)) != 0) {
             self.ext_space_capable = true;
             sink.info("APIC supports AMD specific ERS (Extended Register Space)", .{});
-
-            // enable SEOIs by setting bit 1 of EAC_CONTROL
-            self.write(REG_EAC_CONTROL, self.read(REG_EAC_CONTROL) | (1 << 1));
         }
 
-        // enable the APIC
-        arch.wrmsr(0x1B, arch.rdmsr(0x1B) | (1 << 11));
-        self.write(REG_SPURIOUS, self.read(REG_SPURIOUS) | (1 << 8) | 0xFF);
+        self.enable();
     }
 
     pub fn read(self: *LapicController, reg: u32) u32 {
@@ -49,6 +53,33 @@ pub const LapicController = struct {
 
     pub fn write(self: *LapicController, reg: u32, value: u32) void {
         @intToPtr(*volatile u32, self.mmio_base + reg).* = value;
+    }
+
+    pub fn enable(self: *LapicController) void {
+        if ((self.read(REG_VER) & (1 << 31)) != 0) {
+            // enable SEOIs by setting bit 1 of EAC_CONTROL
+            self.write(REG_EAC_CONTROL, self.read(REG_EAC_CONTROL) | (1 << 1));
+        }
+
+        // enable the APIC
+        arch.wrmsr(0x1B, arch.rdmsr(0x1B) | (1 << 11));
+        self.write(REG_SPURIOUS, self.read(REG_SPURIOUS) | (1 << 8) | 0xFF);
+
+        // on certain platforms (simics and some KVM machines), the
+        // timer starts counting as soon as the APIC is enabled.
+        // therefore, we must stop the timer before calibration...
+        self.write(REG_TIMER_INIT, 0);
+
+        // calibrate the APIC timer (using a 10ms sleep)
+        self.write(REG_TIMER_DIV, 0x3);
+        self.write(REG_TIMER_LVT, 0xFF | (1 << 16));
+        self.write(REG_TIMER_INIT, std.math.maxInt(u32));
+        acpi.pmSleep(10);
+
+        // set the frequency, then set the timer back to a disabled state
+        smp.getCoreInfo().cpu_freq = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
+        self.write(REG_TIMER_INIT, 0);
+        self.write(REG_TIMER_LVT, (1 << 16));
     }
 
     pub fn submitEoi(self: *LapicController, irq: u8) void {
