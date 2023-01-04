@@ -8,24 +8,22 @@ pub const paging = @import("paging.zig");
 // exports
 pub var ic = @import("lapic.zig").LapicController{};
 
-pub const Irql = enum(u4) {
-    critical = 15,
-    sched = 14,
-    passive = 0,
-};
-
-pub fn setIrql(level: Irql) void {
-    asm volatile ("mov %[irql], %%cr8\n"
-        :
-        : [irql] "r" (@as(u64, @enumToInt(level))),
-        : "memory"
+pub fn intrEnabled() bool {
+    var eflags = asm volatile (
+        \\pushf
+        \\pop %[result]
+        : [result] "=r" (-> u64),
     );
+
+    return ((eflags & 0x200) != 0);
 }
 
-pub fn getIrql() Irql {
-    return @intToEnum(Irql, asm volatile ("mov %%cr8, %[irql]"
-        : [irql] "=r" (-> u64),
-    ));
+pub fn setIntrMode(enabled: bool) void {
+    if (enabled) {
+        asm volatile ("sti");
+    } else {
+        asm volatile ("cli");
+    }
 }
 
 pub const TSS = extern struct {
@@ -156,7 +154,6 @@ var gdt_lock = @import("root").smp.SpinLock{};
 pub fn setupAP() void {
     gdt_table.load();
     trap.load();
-    setIrql(.passive);
 }
 
 pub fn setupCpu() void {

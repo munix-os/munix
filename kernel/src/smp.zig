@@ -13,19 +13,13 @@ const AtomicType = atomic.Atomic;
 pub const SpinLock = struct {
     lock_bits: AtomicType(u32) = .{ .value = 0 },
     refcount: AtomicType(usize) = .{ .value = 0 },
-    lock_level: arch.Irql = .critical,
-    level: arch.Irql = undefined,
+    intr_mode: bool = false,
 
     pub fn acq(self: *SpinLock) void {
         _ = self.refcount.fetchAdd(1, .Monotonic);
 
-        // SpinLocks in munix work in terms of IRQ
-        // levels, rather than the coneventional method
-        // of completly disabling IRQs. This means that a
-        // select amount of IRQs can be recived while
-        // in a spinlock, such as panic IPIs
-        var current = arch.getIrql();
-        arch.setIrql(self.lock_level);
+        var current = arch.intrEnabled();
+        arch.setIntrMode(false);
 
         while (true) {
             // ------------------------------------------------
@@ -49,21 +43,21 @@ pub const SpinLock = struct {
             while (self.lock_bits.fetchAdd(0, .Monotonic) != 0) {
                 // IRQs can be recived while waiting
                 // for the lock to be available...
-                arch.setIrql(current);
+                arch.setIntrMode(current);
                 atomic.spinLoopHint();
-                arch.setIrql(self.lock_level);
+                arch.setIntrMode(false);
             }
         }
 
         _ = self.refcount.fetchSub(1, .Monotonic);
         atomic.compilerFence(.Acquire);
-        self.lock_level = current;
+        self.intr_mode = current;
     }
 
     pub fn rel(self: *SpinLock) void {
         self.lock_bits.store(0, .Release);
         atomic.compilerFence(.Release);
-        arch.setIrql(self.level);
+        arch.setIntrMode(self.intr_mode);
     }
 
     // wrappers for zig stdlib
