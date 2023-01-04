@@ -8,6 +8,7 @@ pub const acpi = @import("acpi.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
+pub const vfs = @import("vfs.zig");
 pub const sched = @import("sched.zig");
 
 pub export var terminal_request: limine.TerminalRequest = .{};
@@ -89,6 +90,9 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
 
 fn stage2(arg: u64) noreturn {
     _ = arg;
+
+    vfs.init();
+
     logger.err("init complete, end of kernel reached!", .{});
     sched.exit();
 }
