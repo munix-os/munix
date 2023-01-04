@@ -7,6 +7,7 @@ const vmm = @import("root").vmm;
 
 const allocator = @import("root").allocator;
 const sink = @import("std").log.scoped(.smp);
+const zeroInit = @import("std").mem.zeroInit;
 const AtomicType = atomic.Atomic;
 
 pub const SpinLock = struct {
@@ -82,7 +83,7 @@ pub const CoreInfo = struct {
     cur_thread: ?*sched.Thread = null,
 };
 
-pub inline fn getCoreInfo() *CoreInfo {
+pub fn getCoreInfo() *CoreInfo {
     switch (target.cpu.arch) {
         .x86_64 => {
             return @intToPtr(*CoreInfo, arch.rdmsr(0xC0000101));
@@ -110,8 +111,10 @@ var booted_cores: AtomicType(u16) = .{ .value = 1 };
 fn createCoreInfo(info: *limine.SmpInfo) void {
     var coreinfo = @import("root").allocator.create(CoreInfo) catch unreachable;
 
-    coreinfo.lapic_id = info.lapic_id;
-    coreinfo.processor_id = info.processor_id;
+    coreinfo.* = zeroInit(CoreInfo, .{
+        .lapic_id = info.lapic_id,
+        .processor_id = info.processor_id,
+    });
 
     setCoreInfo(coreinfo);
 }
@@ -124,8 +127,9 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
     arch.ic.enable();
 
     // load the TSS
-    getCoreInfo().tss = @import("std").mem.zeroInit(arch.TSS, arch.TSS{});
-    getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
+    getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{
+        .rsp0 = sched.createKernelStack().?,
+    });
     arch.loadTSS(&getCoreInfo().tss);
 
     // let BSP know we're done, then off we go!
@@ -143,7 +147,7 @@ pub fn init() void {
                 createCoreInfo(cpu);
 
                 // load the TSS
-                getCoreInfo().tss = @import("std").mem.zeroInit(arch.TSS, arch.TSS{});
+                getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{});
                 getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
                 arch.loadTSS(&getCoreInfo().tss);
 

@@ -140,7 +140,7 @@ fn makeStub(comptime vec: u8) TrapStub {
             // zig fmt: off
             asm volatile (
                 // perform a swapgs (if we came from usermode)
-                \\cmpq $0x4b, 16(%rsp)
+                \\cmpq $0x3b, 16(%rsp)
                 \\jne 1f
                 \\swapgs
 
@@ -189,7 +189,7 @@ fn makeStub(comptime vec: u8) TrapStub {
                 \\add $16, %rsp
 
                 // swap back to user gs (if needed)
-                \\cmpq $0x4b, 8(%rsp)
+                \\cmpq $0x3b, 8(%rsp)
                 \\jne 1f
                 \\swapgs
 

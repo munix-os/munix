@@ -87,6 +87,12 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
     }
 }
 
+fn stage2(arg: u64) noreturn {
+    _ = arg;
+    logger.err("init complete, end of kernel reached!", .{});
+    sched.exit();
+}
+
 export fn entry() callconv(.C) noreturn {
     limine_terminal_cr3 = arch.paging.saveSpace();
     logger.info("hello from munix!", .{});
@@ -97,11 +103,12 @@ export fn entry() callconv(.C) noreturn {
     vmm.init();
     acpi.init();
 
-    // boot all other cores, before entering the scheduler with them
-    arch.trap.setHandler(sched.reschedule, 0x30);
+    // boot all other cores, and setup the scheduler
+    arch.trap.setHandler(sched.reschedule, sched.TIMER_VECTOR);
+    _ = sched.spawnKernelThread(stage2, null) catch unreachable;
     smp.init();
-    logger.err("init complete, end of kernel reached!", .{});
-    sched.enter();
 
+    // enter the scheduler, and continue init in stage2
+    sched.enter();
     while (true) {}
 }
