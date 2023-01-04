@@ -29,8 +29,8 @@ pub const VfsNode = struct {
     children: std.ArrayList(*VfsNode),
     context: *anyopaque,
 
-    vtable: *VTable,
-    fs: *FsVTable,
+    vtable: *const VTable,
+    fs: *const FsVTable,
 };
 
 var root: VfsNode = undefined;

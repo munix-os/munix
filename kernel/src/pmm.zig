@@ -69,20 +69,19 @@ const Bitmap = struct {
 pub const PageAllocator = struct {
     base: u64 = 0xFFFF_EA00_0000_0000,
 
-    pub fn alloc(ptr: *anyopaque, len: usize, ptr_a: u29, len_a: u29, ret: usize) std.mem.Allocator.Error![]u8 {
-        _ = ptr_a;
-        _ = len_a;
-        _ = ret;
+    pub fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+        _ = ptr_align;
+        _ = ret_addr;
 
         const pages = std.mem.alignForward(len, PAGE_SIZE);
-        const self = @ptrCast(*PageAllocator, @alignCast(8, ptr));
+        const self = @ptrCast(*PageAllocator, @alignCast(8, ctx));
         const old_base = self.base;
 
         var i: usize = 0;
         var map_flags = vmm.MapFlags{ .write = true };
 
         while (i < pages) : (i += 1) {
-            const page = allocPages(1) orelse return error.OutOfMemory;
+            const page = allocPages(1) orelse return null;
 
             vmm.kernel_pagemap.mapPage(
                 map_flags,
@@ -94,22 +93,21 @@ pub const PageAllocator = struct {
 
         self.base += pages * PAGE_SIZE;
 
-        return @ptrCast([*]u8, @intToPtr(*u8, old_base))[0..len];
+        return @ptrCast([*]u8, @intToPtr(*u8, old_base));
     }
 
-    pub fn resize(ptr: *anyopaque, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
-        _ = ptr;
+    pub fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+        _ = ctx;
         _ = buf;
         _ = buf_align;
         _ = new_len;
-        _ = len_align;
         _ = ret_addr;
 
-        return null;
+        return false;
     }
 
-    pub fn free(ptr: *anyopaque, buf: []u8, buf_align: u29, ret_addr: usize) void {
-        _ = ptr;
+    pub fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+        _ = ctx;
         _ = buf;
         _ = buf_align;
         _ = ret_addr;
