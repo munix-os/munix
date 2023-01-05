@@ -59,40 +59,41 @@ fn tmpfs_close(node: *vfs.VfsNode) void {
     _ = node;
 }
 
-fn tmpfs_open(mode: i32, create: bool) vfs.VfsError!*vfs.VfsNode {
-    if (!create) return error.InvalidParams;
+fn tmpfs_create(name: []const u8, mode: i32) vfs.VfsError!*vfs.VfsNode {
     const allocator = @import("root").allocator;
-
-    var result = try allocator.create(vfs.VfsNode);
     var context = try allocator.create(TmpfsContext);
-    defer allocator.destroy(context);
-    defer allocator.destroy(result);
+    errdefer allocator.destroy(context);
 
-    result.stat = std.mem.zeroes(types.Stat);
+    var result = try vfs.createNode(name, (mode & ~@as(i32, StatFlags.S_IFMT)) | StatFlags.S_IFREG);
+
+    result.vtable = &vtable;
+    result.fs = &fs_vtable;
     result.stat.st_blksize = 512;
     result.stat.st_mode = (mode & ~@as(i32, StatFlags.S_IFMT)) | StatFlags.S_IFREG;
     result.stat.st_nlink = 1;
-    result.vtable = &vtable;
-    result.fs = &fs_vtable;
 
     context.base = pmm.allocPages(1) orelse return error.OutOfMemory;
     context.n_pages = 1;
     result.context = context;
-
     return result;
 }
 
 fn tmpfs_mount(parent_mount: *vfs.VfsNode, source: ?*vfs.VfsNode) vfs.VfsError!void {
     _ = source; // tmpfs doesn't depend on devices
-    const allocator = @import("root").allocator;
 
-    var root_node = try allocator.create(vfs.VfsNode);
-    defer allocator.destroy(root_node);
+    var node = try vfs.createNode(parent_mount.name, types.StatFlags.S_IFDIR);
+    node.vtable = &vtable;
+    node.fs = &fs_vtable;
+    parent_mount.mountpoint = node;
+}
 
-    root_node.stat = std.mem.zeroes(types.Stat);
-    root_node.stat.st_mode = types.StatFlags.S_IFDIR;
-    root_node.children = std.ArrayList(*vfs.VfsNode).init(allocator);
-    parent_mount.mountpoint = root_node;
+fn tmpfs_mkdir(parent_dir: *vfs.VfsNode, basename: []const u8) vfs.VfsError!*vfs.VfsNode {
+    _ = parent_dir;
+    var dir = try vfs.createNode(basename, types.StatFlags.S_IFDIR);
+
+    dir.vtable = &vtable;
+    dir.fs = &fs_vtable;
+    return dir;
 }
 
 const vtable: vfs.VTable = .{
@@ -103,6 +104,7 @@ const vtable: vfs.VTable = .{
 
 pub const fs_vtable: vfs.FsVTable = .{
     .name = "tmpfs",
-    .open = &tmpfs_open,
     .mount = &tmpfs_mount,
+    .mkdir = &tmpfs_mkdir,
+    .create = &tmpfs_create,
 };
