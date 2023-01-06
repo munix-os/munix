@@ -1,0 +1,25 @@
+From 796028567d8dadf794c6ba90809e58dde2d63d7a Mon Sep 17 00:00:00 2001
+From: cleanbaja <cleanbaja@protonmail.com>
+Date: Thu, 5 Jan 2023 20:35:27 +0000
+Subject: [PATCH] update config.sub to recognize munix
+
+---
+ lib/config.sub | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/config.sub b/lib/config.sub
+index d74fb6d..508e9fa 100755
+--- a/lib/config.sub
++++ b/lib/config.sub
+@@ -1724,7 +1724,7 @@ case $os in
+ 	     | sym* |  plan9* | psp* | sim* | xray* | os68k* | v88r* \
+ 	     | hiux* | abug | nacl* | netware* | windows* \
+ 	     | os9* | macos* | osx* | ios* \
+-	     | mpw* | magic* | mmixware* | mon960* | lnews* \
++	     | mpw* | magic* | mmixware* | mon960* | lnews* | munix* \
+ 	     | amigaos* | amigados* | msdos* | newsos* | unicos* | aof* \
+ 	     | aos* | aros* | cloudabi* | sortix* | twizzler* \
+ 	     | nindy* | vxsim* | vxworks* | ebmon* | hms* | mvs* \
+-- 
+2.36.3
+

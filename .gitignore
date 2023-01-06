@@ -3,5 +3,8 @@ limine-zig
 ovmf-x64
 zig-cache
 zig-out
+user/build
+user/bundled
+user/ports
 *.hdd
 *.iso

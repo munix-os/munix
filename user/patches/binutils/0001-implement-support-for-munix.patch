@@ -1,0 +1,71 @@
+From ecaf58f045acca8cdc685636c456c129be71d757 Mon Sep 17 00:00:00 2001
+From: cleanbaja <cleanbaja@protonmail.com>
+Date: Thu, 5 Jan 2023 19:58:52 +0000
+Subject: [PATCH] implement support for munix
+
+---
+ bfd/config.bfd    | 5 +++++
+ config.sub        | 2 +-
+ gas/configure.tgt | 1 +
+ ld/configure.tgt  | 4 ++++
+ 4 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/bfd/config.bfd b/bfd/config.bfd
+index cfe58247..94a32790 100644
+--- a/bfd/config.bfd
++++ b/bfd/config.bfd
+@@ -696,6 +696,11 @@ case "${targ}" in
+     targ_selvecs="i386_elf32_vec"
+     want64=true
+     ;;
++  x86_64-*-munix*)
++    targ_defvec=x86_64_elf64_vec
++    targ_selvecs="i386_elf32_vec"
++    want64=true
++    ;;
+   x86_64-*-netbsd* | x86_64-*-openbsd*)
+     targ_defvec=x86_64_elf64_vec
+     targ_selvecs="i386_elf32_vec iamcu_elf32_vec i386_coff_vec i386_pei_vec x86_64_pe_vec x86_64_pei_vec l1om_elf64_vec k1om_elf64_vec"
+diff --git a/config.sub b/config.sub
+index dba16e84..5fa2daf1 100755
+--- a/config.sub
++++ b/config.sub
+@@ -1729,7 +1729,7 @@ case $os in
+ 	     | sym* |  plan9* | psp* | sim* | xray* | os68k* | v88r* \
+ 	     | hiux* | abug | nacl* | netware* | windows* \
+ 	     | os9* | macos* | osx* | ios* \
+-	     | mpw* | magic* | mmixware* | mon960* | lnews* \
++	     | mpw* | magic* | mmixware* | mon960* | lnews* | munix* \
+ 	     | amigaos* | amigados* | msdos* | newsos* | unicos* | aof* \
+ 	     | aos* | aros* | cloudabi* | sortix* | twizzler* \
+ 	     | nindy* | vxsim* | vxworks* | ebmon* | hms* | mvs* \
+diff --git a/gas/configure.tgt b/gas/configure.tgt
+index 62f806bd..3d62b8bf 100644
+--- a/gas/configure.tgt
++++ b/gas/configure.tgt
+@@ -227,6 +227,7 @@ case ${generic_target} in
+   i386-*-elf*)				fmt=elf ;;
+   i386-*-fuchsia*)			fmt=elf ;;
+   i386-*-haiku*)			fmt=elf em=haiku ;;
++  i386-*-munix*)			fmt=elf ;;
+   i386-*-genode*)			fmt=elf ;;
+   i386-*-bsd*)				fmt=aout em=386bsd ;;
+   i386-*-netbsd*-gnu* | \
+diff --git a/ld/configure.tgt b/ld/configure.tgt
+index c7acf3f1..425c0c5b 100644
+--- a/ld/configure.tgt
++++ b/ld/configure.tgt
+@@ -329,6 +329,10 @@ i[3-7]86-*-linux-*)	targ_emul=elf_i386
+ 			targ64_extra_emuls="elf_x86_64 elf32_x86_64 elf_l1om elf_k1om"
+ 			targ64_extra_libpath="elf_x86_64 elf32_x86_64"
+ 			;;
++x86_64-*-munix*)
++			targ_emul=elf_x86_64
++			targ_extra_emuls=elf_i386
++			;;
+ i[3-7]86-*-redox*)	targ_emul=elf_i386
+ 			targ_extra_emuls=elf_x86_64
+ 			;;
+-- 
+2.36.3
+
