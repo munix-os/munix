@@ -1,7 +1,7 @@
 .POSIX:
 .PHONY: all all-hdd run run-uefi run-hdd run-hdd-uefi
 
-QEMU_COMMON_FLAGS = -M q35 -m 2G -smp 2
+QEMU_COMMON_FLAGS = -M q35 -m 2G -smp 2 --enable-kvm
 
 all: munix.iso
 
@@ -36,6 +36,7 @@ munix.iso: limine kernel
 	mkdir -p iso_root
 	cp kernel/zig-out/bin/kernel \
 		limine.cfg limine/limine.sys limine/limine-cd.bin limine/limine-cd-efi.bin iso_root/
+	[ -f user/initrd.img ] && cp user/initrd.img iso_root/
 	xorriso -as mkisofs -b limine-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot limine-cd-efi.bin \
@@ -58,6 +59,7 @@ munix.hdd: limine kernel
 	sudo mkdir -p img_mount/EFI/BOOT
 	sudo cp -v kernel/zig-out/bin/kernel limine.cfg limine/limine.sys img_mount/
 	sudo cp -v limine/BOOTX64.EFI img_mount/EFI/BOOT/
+	[ -f user/initrd.img ] && cp user/initrd.img img_mount/
 	sync
 	sudo umount img_mount
 	sudo losetup -d `cat loopback_dev`

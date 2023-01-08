@@ -3,108 +3,81 @@ const vfs = @import("root").vfs;
 const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
 const std = @import("std");
-const StatFlags = types.StatFlags;
 
-const TmpfsContext = struct {
-    base: u64,
-    n_pages: usize,
+// export so we can use for initramfs
+pub const TmpfsContext = struct {
+    device: u64 = 0,
+    inode_counter: u64 = 0,
+};
+
+// same goes here
+pub const TmpfsInode = struct {
+    base: []u8,
+    bytes: usize,
 };
 
 fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs.VfsError!usize {
-    var ctx = @ptrCast(*align(1) TmpfsContext, node.context);
+    var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
     var len = length;
 
-    if ((offset + length) > (ctx.n_pages * pmm.PAGE_SIZE)) {
-        if (offset > (ctx.n_pages * pmm.PAGE_SIZE)) {
+    if ((offset + length) > inode.bytes) {
+        if (offset > inode.bytes) {
             return error.InvalidParams;
         } else {
-            len = (ctx.n_pages * pmm.PAGE_SIZE) - offset;
+            len = inode.bytes - offset;
         }
     }
 
-    var data = @intToPtr([*]const u8, vmm.toHigherHalf(ctx.base + offset));
-    std.mem.copy(u8, buffer[0..len], data[0..len]);
+    std.mem.copy(u8, buffer[0..len], inode.base[0..len]);
     return len;
 }
 
 fn tmpfs_write(node: *vfs.VfsNode, buffer: [*]const u8, offset: u64, length: usize) vfs.VfsError!usize {
-    var ctx = @ptrCast(*align(1) TmpfsContext, node.context);
+    const allocator = @import("root").allocator;
+    var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
 
-    if ((offset + length) > (ctx.n_pages * pmm.PAGE_SIZE)) {
-        var old_pagecount = ctx.n_pages;
+    if ((offset + length) > inode.bytes) {
+        while ((offset + length) > inode.bytes) : (inode.bytes *= 2) {}
 
-        while ((offset + length) > (ctx.n_pages * pmm.PAGE_SIZE)) {
-            ctx.n_pages += 1;
-        }
-
-        var new_mem = pmm.allocPages(ctx.n_pages) orelse return error.OutOfMemory;
-        std.mem.copy(
-            u8,
-            @intToPtr([*]u8, vmm.toHigherHalf(new_mem))[0..(old_pagecount * pmm.PAGE_SIZE)],
-            @intToPtr([*]const u8, vmm.toHigherHalf(ctx.base))[0..(old_pagecount * pmm.PAGE_SIZE)],
-        );
-
-        pmm.freePages(ctx.base, old_pagecount);
-        ctx.base = new_mem;
+        node.stat.st_size = @intCast(i64, offset + length);
+        inode.base = try allocator.realloc(inode.base, inode.bytes);
     }
 
-    var data = @intToPtr([*]u8, vmm.toHigherHalf(ctx.base + offset));
-    std.mem.copy(u8, data[0..length], buffer[0..length]);
+    std.mem.copy(u8, inode.base[0..length], buffer[0..length]);
     node.stat.st_size += @intCast(i64, length);
     return length;
 }
 
 fn tmpfs_close(node: *vfs.VfsNode) void {
-    // TODO: implement close for tmpfs (if needed?)
     _ = node;
 }
 
-fn tmpfs_create(name: []const u8, mode: i32) vfs.VfsError!*vfs.VfsNode {
+fn tmpfs_create(parent: *vfs.VfsNode, name: []const u8, stat: types.Stat) vfs.VfsError!*vfs.VfsNode {
     const allocator = @import("root").allocator;
-    var context = try allocator.create(TmpfsContext);
-    errdefer allocator.destroy(context);
+    var context = @ptrCast(*align(1) TmpfsContext, parent.fs.context);
+    var st = stat;
 
-    var result = try vfs.createNode(name, (mode & ~@as(i32, StatFlags.S_IFMT)) | StatFlags.S_IFREG);
+    var inode = try allocator.create(TmpfsInode);
+    inode.bytes = 0;
+    errdefer allocator.destroy(inode);
 
-    result.vtable = &vtable;
-    result.fs = &fs_vtable;
-    result.stat.st_blksize = 512;
-    result.stat.st_mode = (mode & ~@as(i32, StatFlags.S_IFMT)) | StatFlags.S_IFREG;
-    result.stat.st_nlink = 1;
+    context.inode_counter += 1;
+    st.st_dev = context.device;
+    st.st_ino = context.inode_counter;
+    st.st_blksize = 4096;
+    st.st_nlink = 1;
 
-    context.base = pmm.allocPages(1) orelse return error.OutOfMemory;
-    context.n_pages = 1;
-    result.context = context;
+    var result = try vfs.createNode(parent, name, st, parent.fs, parent.vtable, true);
+    result.inode = inode;
     return result;
 }
 
-fn tmpfs_mount(parent_mount: *vfs.VfsNode, source: ?*vfs.VfsNode) vfs.VfsError!void {
-    _ = source; // tmpfs doesn't depend on devices
-
-    var node = try vfs.createNode(parent_mount.name, types.StatFlags.S_IFDIR);
-    node.vtable = &vtable;
-    node.fs = &fs_vtable;
-    parent_mount.mountpoint = node;
-}
-
-fn tmpfs_mkdir(parent_dir: *vfs.VfsNode, basename: []const u8) vfs.VfsError!*vfs.VfsNode {
-    _ = parent_dir;
-    var dir = try vfs.createNode(basename, types.StatFlags.S_IFDIR);
-
-    dir.vtable = &vtable;
-    dir.fs = &fs_vtable;
-    return dir;
-}
-
-const vtable: vfs.VTable = .{
+pub const vtable: vfs.VTable = .{
     .read = &tmpfs_read,
     .write = &tmpfs_write,
     .close = &tmpfs_close,
 };
 
 pub const fs_vtable: vfs.FsVTable = .{
-    .name = "tmpfs",
-    .mount = &tmpfs_mount,
-    .mkdir = &tmpfs_mkdir,
     .create = &tmpfs_create,
 };

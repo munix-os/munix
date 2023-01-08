@@ -6,5 +6,6 @@ zig-out
 user/build
 user/bundled
 user/ports
+user/initrd.img
 *.hdd
 *.iso
