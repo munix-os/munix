@@ -5,9 +5,9 @@ const sched = @import("root").sched;
 const arch = @import("root").arch;
 const vmm = @import("root").vmm;
 
-const allocator = @import("root").allocator;
 const sink = @import("std").log.scoped(.smp);
 const zeroInit = @import("std").mem.zeroInit;
+const allocator = @import("root").allocator;
 const AtomicType = atomic.Atomic;
 
 pub const SpinLock = struct {
@@ -103,7 +103,7 @@ pub export var smp_request: limine.SmpRequest = .{};
 var booted_cores: AtomicType(u16) = .{ .value = 1 };
 
 fn createCoreInfo(info: *limine.SmpInfo) void {
-    var coreinfo = @import("root").allocator.create(CoreInfo) catch unreachable;
+    var coreinfo = allocator().create(CoreInfo) catch unreachable;
 
     coreinfo.* = zeroInit(CoreInfo, .{
         .lapic_id = info.lapic_id,

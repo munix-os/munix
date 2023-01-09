@@ -4,6 +4,8 @@ const smp = @import("root").smp;
 const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
 
+const allocator = @import("root").allocator;
+
 pub const Thread = struct {
     link: Node,
     context: trap.TrapFrame,
@@ -124,13 +126,12 @@ pub fn reschedule(frame: *trap.TrapFrame) callconv(.C) void {
 
 pub fn spawnKernelThread(func: *const fn (u64) noreturn, arg: ?u64) !*Thread {
     const target = @import("builtin").target.cpu.arch;
-    const allocator = @import("root").allocator;
     const mem = @import("std").mem;
 
-    var thread = try allocator.create(Thread);
+    var thread = try allocator().create(Thread);
     thread.kernel_stack = createKernelStack() orelse return error.OutOfMemory;
     thread.context = mem.zeroes(trap.TrapFrame);
-    errdefer allocator.destroy(thread);
+    errdefer allocator().destroy(thread);
 
     switch (target) {
         .x86_64 => {

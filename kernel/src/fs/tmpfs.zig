@@ -4,6 +4,8 @@ const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
 const std = @import("std");
 
+const allocator = @import("root").allocator;
+
 // export so we can use for initramfs
 pub const TmpfsContext = struct {
     device: u64 = 0,
@@ -20,6 +22,9 @@ fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs
     var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
     var len = length;
 
+    node.lock.acq();
+    defer node.lock.rel();
+
     if ((offset + length) > inode.bytes) {
         if (offset > inode.bytes) {
             return error.InvalidParams;
@@ -33,14 +38,16 @@ fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs
 }
 
 fn tmpfs_write(node: *vfs.VfsNode, buffer: [*]const u8, offset: u64, length: usize) vfs.VfsError!usize {
-    const allocator = @import("root").allocator;
     var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
+
+    node.lock.acq();
+    defer node.lock.rel();
 
     if ((offset + length) > inode.bytes) {
         while ((offset + length) > inode.bytes) : (inode.bytes *= 2) {}
 
         node.stat.st_size = @intCast(i64, offset + length);
-        inode.base = try allocator.realloc(inode.base, inode.bytes);
+        inode.base = try allocator().realloc(inode.base, inode.bytes);
     }
 
     std.mem.copy(u8, inode.base[0..length], buffer[0..length]);
@@ -53,13 +60,12 @@ fn tmpfs_close(node: *vfs.VfsNode) void {
 }
 
 fn tmpfs_create(parent: *vfs.VfsNode, name: []const u8, stat: types.Stat) vfs.VfsError!*vfs.VfsNode {
-    const allocator = @import("root").allocator;
     var context = @ptrCast(*align(1) TmpfsContext, parent.fs.context);
     var st = stat;
 
-    var inode = try allocator.create(TmpfsInode);
+    var inode = try allocator().create(TmpfsInode);
     inode.bytes = 0;
-    errdefer allocator.destroy(inode);
+    errdefer allocator().destroy(inode);
 
     context.inode_counter += 1;
     st.st_dev = context.device;

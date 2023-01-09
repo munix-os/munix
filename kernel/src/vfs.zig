@@ -1,7 +1,9 @@
 const std = @import("std");
 const limine = @import("limine");
+const smp = @import("root").smp;
 const zeroes = std.mem.zeroes;
 const sink = std.log.scoped(.vfs);
+const allocator = @import("root").allocator;
 
 // modules
 const tmpfs = @import("fs/tmpfs.zig");
@@ -40,6 +42,7 @@ pub const VfsNode = struct {
     fs: *const Filesystem = undefined,
     mountpoint: ?*VfsNode = null,
     inode: ?*anyopaque = null,
+    lock: smp.SpinLock = .{},
 
     pub fn isDir(self: *VfsNode) bool {
         if ((self.stat.st_mode & types.StatFlags.S_IFDIR) != 0) {
@@ -66,6 +69,9 @@ pub const VfsNode = struct {
             return self.parent;
         }
 
+        self.lock.acq();
+        defer self.lock.rel();
+
         for (self.children.items) |file| {
             if (std.mem.eql(u8, file.name, path)) {
                 // TODO(cleanbaja): handle symlinks
@@ -85,9 +91,8 @@ pub fn createNode(
     vtable: *const VTable,
     add: bool,
 ) !*VfsNode {
-    const allocator = @import("root").allocator;
-    var new_node = try allocator.create(VfsNode);
-    errdefer allocator.destroy(new_node);
+    var new_node = try allocator().create(VfsNode);
+    errdefer allocator().destroy(new_node);
 
     var parent: *VfsNode = root.flatten();
     if (parent_dir) |p| {
@@ -103,10 +108,10 @@ pub fn createNode(
     };
 
     if (new_node.isDir()) {
-        new_node.children = std.ArrayList(*VfsNode).init(allocator);
+        new_node.children = std.ArrayList(*VfsNode).init(allocator());
 
-        var dot_dir = try allocator.create(VfsNode);
-        var dotdot_dir = try allocator.create(VfsNode);
+        var dot_dir = try allocator().create(VfsNode);
+        var dotdot_dir = try allocator().create(VfsNode);
 
         dot_dir.* = .{
             .name = ".",
@@ -129,6 +134,9 @@ pub fn createNode(
     }
 
     if (add) {
+        parent.lock.acq();
+        defer parent.lock.rel();
+
         try parent.children.append(new_node);
     }
 
@@ -338,16 +346,14 @@ pub export var mods_request: limine.ModuleRequest = .{};
 var root: VfsNode = undefined;
 
 pub fn init() void {
-    const allocator = @import("root").allocator;
-
     // fill in the root vfs node
     root.name = "/";
     root.stat = zeroes(types.Stat);
     root.stat.st_mode = types.StatFlags.S_IFDIR;
 
     // create tmpfs context
-    var context = allocator.create(tmpfs.TmpfsContext) catch unreachable;
-    var filesystem = allocator.create(Filesystem) catch unreachable;
+    var context = allocator().create(tmpfs.TmpfsContext) catch unreachable;
+    var filesystem = allocator().create(Filesystem) catch unreachable;
     filesystem.context = context;
     filesystem.vtable = &tmpfs.fs_vtable;
     context.device = 1;
@@ -368,7 +374,7 @@ pub fn init() void {
             stat.st_size = @intCast(i64, file.filesize);
             var node = createDeepNode(null, file.name, stat, filesystem, &tmpfs.vtable) catch unreachable;
 
-            var inode = allocator.create(tmpfs.TmpfsInode) catch unreachable;
+            var inode = allocator().create(tmpfs.TmpfsInode) catch unreachable;
             inode.base = file.file;
             inode.bytes = file.filesize;
             node.inode = inode;

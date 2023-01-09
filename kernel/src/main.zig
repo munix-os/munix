@@ -11,13 +11,12 @@ pub const smp = @import("smp.zig");
 pub const vfs = @import("vfs.zig");
 pub const sched = @import("sched.zig");
 
+var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
 pub export var terminal_request: limine.TerminalRequest = .{};
-var log_buffer: [16 * 4096]u8 = undefined;
-var log_lock = smp.SpinLock{};
-var limine_terminal_cr3: u64 = 0;
 
-pub var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
-pub var allocator = g_alloc.allocator();
+pub inline fn allocator() std.mem.Allocator {
+    return g_alloc.allocator();
+}
 
 pub const os = .{
     .heap = .{
@@ -31,6 +30,10 @@ pub const os = .{
         },
     },
 };
+
+var log_buffer: [16 * 4096]u8 = undefined;
+var log_lock = smp.SpinLock{};
+var limine_terminal_cr3: u64 = 0;
 
 pub fn log(
     comptime level: std.log.Level,
