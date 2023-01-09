@@ -73,9 +73,9 @@ sources:
 
   - name: musl
     subdir: ports
-    git: "https://github.com/bminor/musl.git"
-    tag: "v1.2.3"
-    version: "1.2.3"
+    git: "https://github.com/cleanbaja/musl.git"
+    branch: "master"
+    version: "1.2.3-munix"
 
   - name: hello
     subdir: ports
