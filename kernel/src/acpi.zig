@@ -230,7 +230,7 @@ pub fn init() void {
 
             for (getEntries(u64, x)) |ent| {
                 var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
-                // mapTable(@ptrToInt(entry), entry.length);
+                mapTable(@ptrToInt(entry), entry.length);
                 printTable(entry);
             }
         } else {

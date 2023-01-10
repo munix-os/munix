@@ -41,7 +41,7 @@ pub const PageMap = struct {
     }
 
     pub fn unmapPage(self: *PageMap, virt: u64) void {
-        var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
+        var root: ?[*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
 
         self.lock.acq();
         defer self.lock.rel();
@@ -54,15 +54,22 @@ pub const PageMap = struct {
         // zig fmt: on
 
         // perform translation to pte
-        // TODO(cleanbaja): don't just unwrap (handle the case of a OOM)
-        root = getNextLevel(root, indices[0], true).?;
-        root = getNextLevel(root, indices[1], true).?;
+        root = getNextLevel(root.?, indices[0], false);
+        if (root == null) {
+            return;
+        }
 
-        if ((root[indices[2]] & (1 << 7)) != 0) {
-            root[indices[2]] &= ~@intCast(u64, 1);
+        root = getNextLevel(root.?, indices[1], false);
+        if (root == null) {
+            return;
+        }
+
+        if ((root.?[indices[2]] & (1 << 7)) != 0) {
+            root.?[indices[2]] &= ~@intCast(u64, 1);
         } else {
-            root = getNextLevel(root, indices[2], true).?;
-            root[indices[3]] &= ~@intCast(u64, 1);
+            if (getNextLevel(root.?, indices[2], false)) |final_root| {
+                final_root[indices[3]] &= ~@intCast(u64, 1);
+            }
         }
 
         invalidatePage(virt);
@@ -135,10 +142,10 @@ fn createPte(flags: vmm.MapFlags, phys_ptr: u64, huge: bool) u64 {
     return result;
 }
 
-pub inline fn invalidatePage(ptr: usize) void {
+pub inline fn invalidatePage(addr: u64) void {
     asm volatile ("invlpg (%[virt])"
         :
-        : [virt] "r" (ptr),
+        : [virt] "r" (addr),
         : "memory"
     );
 }

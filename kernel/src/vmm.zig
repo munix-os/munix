@@ -15,25 +15,16 @@ pub const MapFlags = packed struct {
     _padding: u24 = 0,
 };
 
-pub export var hhdm_request: limine.HhdmRequest = .{};
 pub export var kaddr_request: limine.KernelAddressRequest = .{};
 pub const DEFAULT_HIGHER_HALF: u64 = 0xFFFF800000000000;
 pub var kernel_pagemap = paging.PageMap{};
 
 pub fn toHigherHalf(ptr: usize) usize {
-    if (hhdm_request.response) |resp| {
-        return ptr + resp.offset;
-    } else {
-        return ptr + DEFAULT_HIGHER_HALF;
-    }
+    return ptr + DEFAULT_HIGHER_HALF;
 }
 
 pub fn fromHigherHalf(ptr: usize) usize {
-    if (hhdm_request.response) |resp| {
-        return ptr - resp.offset;
-    } else {
-        return ptr - DEFAULT_HIGHER_HALF;
-    }
+    return ptr - DEFAULT_HIGHER_HALF;
 }
 
 pub fn init() void {

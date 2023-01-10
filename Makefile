@@ -59,11 +59,11 @@ munix.hdd: limine kernel
 	sudo mkdir -p img_mount/EFI/BOOT
 	sudo cp -v kernel/zig-out/bin/kernel limine.cfg limine/limine.sys img_mount/
 	sudo cp -v limine/BOOTX64.EFI img_mount/EFI/BOOT/
-	[ -f user/initrd.img ] && cp user/initrd.img img_mount/
+	[ -f user/initrd.img ] && sudo cp user/initrd.img img_mount/
 	sync
 	sudo umount img_mount
 	sudo losetup -d `cat loopback_dev`
-	rm -rf loopback_dev img_mount
+	sudo rm -rf loopback_dev img_mount
 
 clean:
 	rm -rf iso_root munix.iso munix.hdd
