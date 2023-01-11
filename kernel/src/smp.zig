@@ -73,7 +73,9 @@ pub const CoreInfo = struct {
     processor_id: u32,
     lapic_id: u32,
     ticks_per_ms: u64 = 0,
+    user_stack: u64 = 0,
     tss: arch.TSS = .{},
+    is_bsp: bool = false,
     cur_thread: ?*sched.Thread = null,
 };
 
@@ -119,6 +121,7 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
     vmm.kernel_pagemap.load();
     createCoreInfo(info);
     arch.ic.enable();
+    arch.cpu.init();
 
     // load the TSS
     getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{
@@ -139,12 +142,14 @@ pub fn init() void {
         for (resp.cpus()) |cpu| {
             if (cpu.lapic_id == resp.bsp_lapic_id) {
                 createCoreInfo(cpu);
+                getCoreInfo().is_bsp = true;
 
                 // load the TSS
                 getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{});
                 getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
                 arch.loadTSS(&getCoreInfo().tss);
 
+                arch.cpu.init();
                 arch.ic.setup();
                 continue;
             }

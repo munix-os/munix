@@ -4,27 +4,27 @@ const std = @import("std");
 // modules
 pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
+pub const cpu = @import("cpu.zig");
 
 // exports
 pub var ic = @import("lapic.zig").LapicController{};
 
-pub fn intrEnabled() bool {
-    var eflags = asm volatile (
-        \\pushf
-        \\pop %[result]
-        : [result] "=r" (-> u64),
-    );
+const CpuidResult = struct {
+    eax: u32,
+    ebx: u32,
+    ecx: u32,
+    edx: u32,
+};
 
-    return ((eflags & 0x200) != 0);
-}
-
-pub fn setIntrMode(enabled: bool) void {
-    if (enabled) {
-        asm volatile ("sti");
-    } else {
-        asm volatile ("cli");
-    }
-}
+const TSSDescriptor = extern struct {
+    length: u16 align(1),
+    base_low: u16 align(1),
+    base_mid: u8 align(1),
+    flags: u16 align(1),
+    base_high: u8 align(1),
+    base_ext: u32 align(1),
+    reserved: u32 align(1) = 0,
+};
 
 pub const TSS = extern struct {
     unused0: u32 align(1) = 0,
@@ -43,18 +43,8 @@ pub const TSS = extern struct {
     iopb: u32 align(1) = 0,
 };
 
-const TSSDescriptor = extern struct {
-    length: u16 align(1),
-    base_low: u16 align(1),
-    base_mid: u8 align(1),
-    flags: u16 align(1),
-    base_high: u8 align(1),
-    base_ext: u32 align(1),
-    reserved: u32 align(1) = 0,
-};
-
 const GDT = extern struct {
-    entries: [7]u64 align(1) = .{
+    entries: [9]u64 align(1) = .{
         // null entry
         0x0000000000000000,
 
@@ -69,6 +59,10 @@ const GDT = extern struct {
         // 64-bit kernel code/data
         0x00af9b000000ffff,
         0x00af93000000ffff,
+
+        // 64-bit user code/data
+        0x00AFFA000000FFFF,
+        0x008FF2000000FFFF,
     },
     tss_desc: TSSDescriptor = .{
         .length = 104,
@@ -106,6 +100,24 @@ const GDT = extern struct {
     }
 };
 
+pub fn intrEnabled() bool {
+    var eflags = asm volatile (
+        \\pushf
+        \\pop %[result]
+        : [result] "=r" (-> u64),
+    );
+
+    return ((eflags & 0x200) != 0);
+}
+
+pub fn setIntrMode(enabled: bool) void {
+    if (enabled) {
+        asm volatile ("sti");
+    } else {
+        asm volatile ("cli");
+    }
+}
+
 pub fn loadTSS(tss: *TSS) void {
     gdt_lock.acq();
     defer gdt_lock.rel();
@@ -120,8 +132,17 @@ pub fn loadTSS(tss: *TSS) void {
 
     asm volatile ("ltr %[tss]"
         :
-        : [tss] "r" (@as(u16, 0x38)),
+        : [tss] "r" (@as(u16, 0x48)),
         : "memory"
+    );
+}
+
+pub fn wrmsr(reg: u64, val: u64) void {
+    asm volatile ("wrmsr"
+        :
+        : [_] "{eax}" (val & 0xFFFFFFFF),
+          [_] "{edx}" (val >> 32),
+          [_] "{ecx}" (reg),
     );
 }
 
@@ -138,13 +159,61 @@ pub fn rdmsr(reg: u64) u64 {
     return @as(u64, low) | (@as(u64, high) << 32);
 }
 
-pub fn wrmsr(reg: u64, val: u64) void {
-    asm volatile ("wrmsr"
+pub inline fn wrcr4(value: usize) void {
+    asm volatile ("mov %[val], %%cr4"
         :
-        : [_] "{eax}" (val & 0xFFFFFFFF),
-          [_] "{edx}" (val >> 32),
-          [_] "{ecx}" (reg),
+        : [val] "r" (value),
+        : "memory"
     );
+}
+
+pub inline fn rdcr4() usize {
+    return asm volatile ("mov %%cr4, %[result]"
+        : [result] "=r" (-> u64),
+        :
+        : "memory"
+    );
+}
+
+pub inline fn wrcr0(value: usize) void {
+    asm volatile ("mov %[val], %%cr4"
+        :
+        : [val] "r" (value),
+        : "memory"
+    );
+}
+
+pub inline fn rdcr0() usize {
+    return asm volatile ("mov %%cr4, %[result]"
+        : [result] "=r" (-> u64),
+        :
+        : "memory"
+    );
+}
+
+pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
+    var eax: u32 = 0;
+    var ebx: u32 = 0;
+    var ecx: u32 = 0;
+    var edx: u32 = 0;
+
+    asm volatile (
+        \\cpuid
+        : [eax] "={eax}" (eax),
+          [ebx] "={ebx}" (ebx),
+          [ecx] "={ecx}" (ecx),
+          [edx] "={edx}" (edx),
+        : [leaf] "{eax}" (leaf),
+          [subleaf] "{ecx}" (subleaf),
+        : "memory"
+    );
+
+    return .{
+        .eax = eax,
+        .ebx = ebx,
+        .ecx = ecx,
+        .edx = edx,
+    };
 }
 
 pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
