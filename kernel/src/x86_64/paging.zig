@@ -94,7 +94,7 @@ fn getNextLevel(level: [*]u64, index: usize, create: bool) ?[*]u64 {
         }
     }
 
-    return @intToPtr([*]u64, vmm.toHigherHalf(level[index] & ~(@intCast(u64, 0x1ff))));
+    return @intToPtr([*]u64, vmm.toHigherHalf(level[index] & ~@intCast(u64, 0x1ff)));
 }
 
 fn createPte(flags: vmm.MapFlags, phys_ptr: u64, huge: bool) u64 {

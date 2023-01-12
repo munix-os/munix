@@ -29,6 +29,13 @@ pub const TrapFrame = extern struct {
         log_func("R10: {X:0>16} - R11: {X:0>16} - R12: {X:0>16}", .{ self.r10, self.r11, self.r12 });
         log_func("R13: {X:0>16} - R14: {X:0>16} - R15: {X:0>16}", .{ self.r13, self.r14, self.r15 });
         log_func("RSP: {X:0>16} - RIP: {X:0>16} - CS:  {X:0>16}", .{ self.rsp, self.rip, self.cs });
+
+        var cr2 = asm volatile ("mov %%cr2, %[out]"
+            : [out] "=r" (-> u64),
+            :
+            : "memory"
+        );
+        log_func("Linear Address: 0x{X:0>16}, EC bits: 0x{X:0>8}", .{ cr2, self.error_code });
     }
 };
 

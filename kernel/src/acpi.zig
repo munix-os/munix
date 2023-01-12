@@ -140,18 +140,6 @@ fn printTable(sdt: *Header) void {
     // zig fmt: on
 }
 
-fn mapTable(base: u64, length: usize) void {
-    var aligned_base: u64 = std.mem.alignBackward(base, 0x200000);
-    var aligned_length: usize = std.mem.alignForward(length, 0x200000);
-    var table_flags = vmm.MapFlags{ .read = true, .cache_type = .uncached };
-
-    var i: usize = 0;
-    while (i < aligned_length) : (i += 0x200000) {
-        vmm.kernel_pagemap.unmapPage(aligned_base + i);
-        vmm.kernel_pagemap.mapPage(table_flags, aligned_base + i, vmm.fromHigherHalf(aligned_base + i), true);
-    }
-}
-
 pub fn getTable(signature: []const u8) ?*Header {
     if (xsdt) |x| {
         for (getEntries(u64, x)) |ent| {
@@ -213,15 +201,15 @@ pub fn pmSleep(ms: u64) void {
 
 pub fn init() void {
     if (rsdp_request.response) |resp| {
+        // TODO(cleanbaja): find a way to fragment
+        // pages, so that we can map acpi tables,
+        // without modifying other pages
         var xsdp = @intToPtr(*align(1) const XSDP, @ptrToInt(resp.address));
-        mapTable(@ptrToInt(xsdp), xsdp.length);
 
         if (xsdp.revision >= 2 and xsdp.xsdt != 0) {
             xsdt = @intToPtr(*Header, vmm.toHigherHalf(xsdp.xsdt));
-            mapTable(vmm.toHigherHalf(xsdp.xsdt), xsdt.?.length);
         } else {
             rsdt = @intToPtr(*Header, vmm.toHigherHalf(@intCast(usize, xsdp.rsdt)));
-            mapTable(vmm.toHigherHalf(xsdp.rsdt), rsdt.?.length);
         }
 
         if (xsdt) |x| {
@@ -230,7 +218,6 @@ pub fn init() void {
 
             for (getEntries(u64, x)) |ent| {
                 var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
-                mapTable(@ptrToInt(entry), entry.length);
                 printTable(entry);
             }
         } else {
@@ -239,7 +226,6 @@ pub fn init() void {
 
             for (getEntries(u32, rsdt.?)) |ent| {
                 var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
-                mapTable(@ptrToInt(entry), entry.length);
                 printTable(entry);
             }
         }
@@ -251,7 +237,6 @@ pub fn init() void {
             if (xsdp.revision >= 2 and fadt.x_pm_timer_blk.base_type == 0) {
                 timer_block = fadt.x_pm_timer_blk;
                 timer_block.base = vmm.toHigherHalf(timer_block.base);
-                mapTable(timer_block.base, 4);
             } else {
                 if (fadt.pm_timer_blk == 0 or fadt.pm_timer_length != 4) {
                     @panic("ACPI Timer is unsupported/malformed");
