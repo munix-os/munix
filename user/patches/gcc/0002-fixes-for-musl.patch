@@ -1,0 +1,41 @@
+From 3ebd8befb8b6f5fbf589d13613f9634fb4689315 Mon Sep 17 00:00:00 2001
+From: cleanbaja <cleanbaja@protonmail.com>
+Date: Fri, 13 Jan 2023 01:29:40 +0000
+Subject: [PATCH] fixes for musl
+
+---
+ gcc/system.h    | 3 ++-
+ libcpp/system.h | 3 ++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/gcc/system.h b/gcc/system.h
+index c5562cc49..c607bcf87 100644
+--- a/gcc/system.h
++++ b/gcc/system.h
+@@ -910,7 +910,8 @@ extern void fancy_abort (const char *, int, const char *)
+ #undef calloc
+ #undef strdup
+ #undef strndup
+- #pragma GCC poison calloc strdup strndup
++ /* don't poison calloc, since it causes a error within sched.h */
++ #pragma GCC poison strdup strndup
+ 
+ #if !defined(FLEX_SCANNER) && !defined(YYBISON)
+ #undef malloc
+diff --git a/libcpp/system.h b/libcpp/system.h
+index e80cf029d..ddf8cc4ec 100644
+--- a/libcpp/system.h
++++ b/libcpp/system.h
+@@ -440,7 +440,8 @@ extern void fancy_abort (const char *, int, const char *) ATTRIBUTE_NORETURN;
+ #undef strdup
+ #undef malloc
+ #undef realloc
+- #pragma GCC poison calloc strdup
++ /* don't poison calloc, since it causes a error within sched.h */
++ #pragma GCC poison strdup
+  #pragma GCC poison malloc realloc
+ 
+ /* Libiberty macros that are no longer used in GCC.  */
+-- 
+2.36.3
+

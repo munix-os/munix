@@ -228,9 +228,9 @@ tools:
           # GCC does *not* look for target-prefixed LD/AS.
           # Instead, it searches a list of prefix directories. Link AS/LD to make it happy.
           - args: ['mkdir', '-p', '@PREFIX@/@OPTION:arch-triple@/bin']
-          - args: ['ln', '-sf', '../../../cross-binutils/@OPTION:arch-triple@/bin/as',
+          - args: ['ln', '-sf', '../../../host-binutils/@OPTION:arch-triple@/bin/as',
                                '@PREFIX@/@OPTION:arch-triple@/bin/as']
-          - args: ['ln', '-sf', '../../../cross-binutils/@OPTION:arch-triple@/bin/ld',
+          - args: ['ln', '-sf', '../../../host-binutils/@OPTION:arch-triple@/bin/ld',
                                '@PREFIX@/@OPTION:arch-triple@/bin/ld']
       - name: libgcc
         tools_required:
@@ -243,24 +243,20 @@ tools:
         install:
           - args: ['make', 'install-target-libgcc']
 
-# libstdc++ currently fails with GCC_NO_EXECUTABLES, so patch it out for now.
-# this means that we can't build c++ programs...
-# 
-#      - name: libstdc++
-#        tools_required:
-#          - tool: host-gcc
-#            stage_dependencies: [libgcc]
-#        compile:
-#          - args: ['make', '-j@PARALLELISM@', 'all-target-libstdc++-v3']
-#        install:
-#          - args: ['make', 'install-target-libstdc++-v3']
+      - name: libstdc++
+        tools_required:
+          - tool: host-gcc
+            stage_dependencies: [libgcc]
+        compile:
+          - args: ['make', '-j@PARALLELISM@', 'all-target-libstdc++-v3']
+        install:
+          - args: ['make', 'install-target-libstdc++-v3']
 
 packages:
   - name: musl
     from_source: musl
-    implict_package: true
     tools_required:
-      - tool: bootstrap-host-gcc
+      - bootstrap-host-gcc
     pkgs_required:
       - musl-headers
     configure:
@@ -270,10 +266,11 @@ packages:
       - args: ['make', 'install']
         environ:
           DESTDIR: '@THIS_COLLECT_DIR@'
+        quiet: true
+      - args: ['ln', '-sf', 'crt0.o', '@THIS_COLLECT_DIR@/usr/lib/crt1.o']
 
   - name: musl-headers
     from_source: musl
-    implict_package: true
     configure:
       # leave out the target, so musl doesn't try to use the target gcc (which isn't built yet)
       - args: ['@THIS_SOURCE_DIR@/configure', '--prefix=/usr']
@@ -281,20 +278,14 @@ packages:
       - args: ['make', 'install-headers']
         environ:
           DESTDIR: '@THIS_COLLECT_DIR@'
+        quiet: true
 
   - name: hello
     from_source: hello
     tools_required:
       - host-gcc
-    pkgs_required:
-      - musl
-    configure:
-      - args: |
-          cp -r @THIS_SOURCE_DIR@/. @THIS_BUILD_DIR@
-          echo "s|DESTDIR =|DESTDIR = @THIS_COLLECT_DIR@|g" -i "@THIS_BUILD_DIR@/Makefile"
     build:
-      - args: ['make', '-j@PARALLELISM@']
-      - args: ['make', 'install']
-        environ:
-          DESTDIR: '@THIS_COLLECT_DIR@'
-          CC: '@OPTION:arch-triple@'
+      - args: ['make', 'CC=@OPTION:arch-triple@-gcc', '-j@PARALLELISM@']
+        workdir: '@THIS_SOURCE_DIR@'
+      - args: ['make', 'PREFIX=/usr', 'DESTDIR=@THIS_COLLECT_DIR@', 'install']
+        workdir: '@THIS_SOURCE_DIR@'
