@@ -1,0 +1,110 @@
+From ad917851737cad04cd832adbb83fc14d65415b90 Mon Sep 17 00:00:00 2001
+From: cleanbaja <cleanbaja@protonmail.com>
+Date: Sat, 14 Jan 2023 00:33:27 +0000
+Subject: [PATCH] changes for munix
+
+---
+ configure  | 5 +++++
+ edit.c     | 2 ++
+ misc.c     | 3 ++-
+ portable.h | 8 ++++----
+ sh.h       | 1 +
+ 5 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/configure b/configure
+index 358de20..43f163c 100755
+--- a/configure
++++ b/configure
+@@ -955,6 +955,11 @@ if [ $doconfigure -eq 0 ] ; then
+     CC=gcc
+   fi
+   cflags="$cflags -std=gnu99"
++
++  # munix always cross-compiles oksh
++  vpath="$(dirname $0)"
++  cflags="$cflags -I$(pwd)"
++
+   echo "OK, I trust you."
+   echo "I'll assume you have gcc/clang and little else."
+   echo "Edit Makefile and pconfig.h if needed."
+diff --git a/edit.c b/edit.c
+index ca648fc..cc72e83 100644
+--- a/edit.c
++++ b/edit.c
+@@ -31,6 +31,8 @@ static int	x_file_glob(int, const char *, int, char ***);
+ static int	x_command_glob(int, const char *, int, char ***);
+ static int	x_locate_word(const char *, int, int, int *, int *);
+ 
++// musl doesn't define u_char, so do it here...
++#define u_char uint8_t
+ 
+ /* Called from main */
+ void
+diff --git a/misc.c b/misc.c
+index 428f183..19b5068 100644
+--- a/misc.c
++++ b/misc.c
+@@ -297,7 +297,8 @@ change_flag(enum sh_flag f,
+ 		gid_t gid = getgid();
+ 
+ 		setresgid(gid, gid, gid);
+-		setgroups(1, &gid);
++		printf("oksh: WARNING!!! setgroups() isn't implemented!\n");
++		// setgroups(1, &gid);
+ 		setresuid(ksheuid, ksheuid, ksheuid);
+ 
+ #ifdef HAVE_PLEDGE
+diff --git a/portable.h b/portable.h
+index 5c86edd..22cb90b 100644
+--- a/portable.h
++++ b/portable.h
+@@ -9,14 +9,14 @@
+  * Includes
+  */
+ 
+-#if defined(__linux__) || defined(__CYGWIN__) || defined(__midipix__)
++#if defined(__linux__) || defined(__CYGWIN__) || defined(__midipix__) || defined(__munix__)
+ #include <sys/file.h>
+ #include <sys/types.h>
+ 
+ #include <grp.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+-#endif /* __linux__ || __CYGWIN__ || __midipix__ */
++#endif /* __linux__ || __CYGWIN__ || __midipix__ || __munix__ */
+ 
+ #include <sys/param.h>
+ #include <sys/time.h>
+@@ -55,7 +55,7 @@
+ #endif /* !_PATH_BSHELL */
+ 
+ #ifndef _PW_NAME_LEN
+-#if defined(__linux__) || defined(__CYGWIN__) || defined(_AIX) || defined(__midipix__) || defined(__HAIKU__)
++#if defined(__linux__) || defined(__CYGWIN__) || defined(_AIX) || defined(__midipix__) || defined(__HAIKU__) || defined(__munix__)
+ #define _PW_NAME_LEN	LOGIN_NAME_MAX
+ #elif defined(__NetBSD__)
+ #define _PW_NAME_LEN	MAXLOGNAME
+@@ -65,7 +65,7 @@
+ #define _PW_NAME_LEN	8
+ #else
+ #define _PW_NAME_LEN	MAXLOGNAME - 1
+-#endif /* __linux__ || __CYGWIN__ || _AIX || __NetBSD__ || __sun || __midipix__ || __HAIKU__ */
++#endif /* __linux__ || __CYGWIN__ || _AIX || __NetBSD__ || __sun || __midipix__ || __HAIKU__ || __munix__ */
+ #endif /* !_PW_NAME_LEN */
+ 
+ #ifndef LOCK_EX
+diff --git a/sh.h b/sh.h
+index 2d65808..fa9b5bf 100644
+--- a/sh.h
++++ b/sh.h
+@@ -16,6 +16,7 @@
+ #include <stddef.h>
+ #include <signal.h>
+ #include <stdbool.h>
++#include <stdint.h>
+ 
+ /* end of common headers */
+ 
+-- 
+2.36.3
+
