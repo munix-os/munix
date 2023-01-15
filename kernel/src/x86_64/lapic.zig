@@ -21,6 +21,7 @@ pub const LapicController = struct {
     const REG_TIMER_DIV = 0x3E0;
 
     // extended apic regs
+    const REG_EAC_FEATURES = 0x400;
     const REG_EAC_CONTROL = 0x410;
     const REG_EAC_SEOI = 0x420;
 
@@ -55,8 +56,11 @@ pub const LapicController = struct {
 
     pub fn enable(self: *LapicController) void {
         if ((self.read(REG_VER) & (1 << 31)) != 0) {
-            // enable SEOIs by setting bit 1 of EAC_CONTROL
-            self.write(REG_EAC_CONTROL, self.read(REG_EAC_CONTROL) | (1 << 1));
+            // check for XAIDC (Ext APIC-ID Capable) and SNIC (Specific EOI Capable)
+            var supported_feats = self.read(REG_EAC_FEATURES);
+
+            // enable all supported features
+            self.write(REG_EAC_CONTROL, supported_feats & 0b110);
         }
 
         // enable the APIC
@@ -81,7 +85,7 @@ pub const LapicController = struct {
     }
 
     pub fn submitEoi(self: *LapicController, irq: u8) void {
-        if (self.ext_space_capable) {
+        if (self.ext_space_capable and self.read(REG_EAC_FEATURES) & (1 << 1) == 0) {
             self.write(REG_EAC_SEOI, irq);
         } else {
             self.write(REG_EOI, 0);
