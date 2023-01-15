@@ -12,6 +12,39 @@ const SaveType = enum {
     xsaves,
 };
 
+const FpuState = extern struct {
+    // legacy x87 fpu context
+    ctrl: u16,
+    status: u16,
+    tag: u16,
+    fop: u16,
+    ip: u64,
+    dp: u64,
+
+    // mxcsr control double-words
+    mxcsr: u32,
+    mxcsr_mask: u32,
+
+    // x87 floating point regs
+    st_regs: [32]u32,
+
+    // SSE simd regs and padding
+    xmm_regs: [64]u32,
+    padding: [24]u32,
+};
+
+const XSaveState = extern struct {
+    fpu_state: FpuState,
+    xfeatures: u64,
+    xcomp_bv: u64,
+    reserved: [6]u64,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(FpuState) == 512);
+    std.debug.assert(@sizeOf(XSaveState) == 512 + 64);
+}
+
 // the combined bits of every supported XCR0 extension
 const supported_mask = 0x602e7;
 
@@ -38,10 +71,10 @@ pub export fn handleSyscall(frame: *trap.TrapFrame) callconv(.C) void {
 }
 
 pub fn fpuRestore(save_area: []const u8) void {
-    std.debug.assert(@ptrToInt(save_area) % fpu_storage_align == 0);
+    std.debug.assert(@ptrToInt(&save_area) % fpu_storage_align == 0);
 
-    var rbfm = 0xffffffff;
-    var rbfm_high = 0xffffffff;
+    var rbfm: u32 = 0xffffffff;
+    var rbfm_high: u32 = 0xffffffff;
 
     switch (fpu_mode) {
         .xsave, .xsavec, .xsaveopt => {
@@ -73,16 +106,16 @@ pub fn fpuRestore(save_area: []const u8) void {
 }
 
 pub fn fpuSave(save_area: []const u8) void {
-    std.debug.assert(@ptrToInt(save_area) % fpu_storage_align == 0);
+    std.debug.assert(@ptrToInt(&save_area) % fpu_storage_align == 0);
 
-    var rbfm = 0xffffffff;
-    var rbfm_high = 0xffffffff;
+    var rbfm: u32 = 0xffffffff;
+    var rbfm_high: u32 = 0xffffffff;
 
     switch (fpu_mode) {
         .xsave => {
             asm volatile ("xsaveq (%[context])"
                 :
-                : [context] "r" (save_area),
+                : [context] "r" (@ptrToInt(&save_area)),
                   [eax] "{eax}" (rbfm),
                   [edx] "{edx}" (rbfm_high),
                 : "memory"
@@ -91,7 +124,7 @@ pub fn fpuSave(save_area: []const u8) void {
         .xsavec => {
             asm volatile ("xsavecq (%[context])"
                 :
-                : [context] "r" (save_area),
+                : [context] "r" (@ptrToInt(&save_area)),
                   [eax] "{eax}" (rbfm),
                   [edx] "{edx}" (rbfm_high),
                 : "memory"
@@ -100,7 +133,7 @@ pub fn fpuSave(save_area: []const u8) void {
         .xsaves => {
             asm volatile ("xsavesq (%[context])"
                 :
-                : [context] "r" (save_area),
+                : [context] "r" (@ptrToInt(&save_area)),
                   [eax] "{eax}" (rbfm),
                   [edx] "{edx}" (rbfm_high),
                 : "memory"
@@ -109,7 +142,7 @@ pub fn fpuSave(save_area: []const u8) void {
         .xsaveopt => {
             asm volatile ("xsaveoptq (%[context])"
                 :
-                : [context] "r" (save_area),
+                : [context] "r" (@ptrToInt(&save_area)),
                   [eax] "{eax}" (rbfm),
                   [edx] "{edx}" (rbfm_high),
                 : "memory"
@@ -118,7 +151,7 @@ pub fn fpuSave(save_area: []const u8) void {
         .fxsave => {
             asm volatile ("fxsaveq (%[context])"
                 :
-                : [context] "r" (save_area),
+                : [context] "r" (@ptrToInt(&save_area)),
                 : "memory"
             );
         },
@@ -143,10 +176,13 @@ pub fn setupFpu() void {
         }
         if (result.eax & (1 << 3) != 0) {
             fpu_mode = .xsaves;
+
+            // clear XSS, since munix doesn't support any supervisor states
+            arch.wrmsr(0xda0, 0);
         }
 
-        result = arch.cpuid(0xD, 0);
         wrxcr(0, @as(u64, result.eax) & supported_mask);
+        result = arch.cpuid(0xD, 0);
 
         if (smp.getCoreInfo().is_bsp) {
             sink.info("supported extensions bitmask: 0x{X}", .{result.eax});
@@ -156,8 +192,11 @@ pub fn setupFpu() void {
             .xsave, .xsaveopt => {
                 fpu_storage_size = result.ecx;
             },
-            .xsavec, .xsaves => {
+            .xsavec => {
                 fpu_storage_size = result.ebx;
+            },
+            .xsaves => {
+                fpu_storage_size = arch.cpuid(0xD, 1).ebx;
             },
             else => {},
         }
