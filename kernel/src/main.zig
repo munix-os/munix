@@ -9,6 +9,7 @@ pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
 pub const vfs = @import("vfs.zig");
+pub const proc = @import("process.zig");
 pub const sched = @import("sched.zig");
 
 var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
@@ -92,9 +93,10 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
 }
 
 fn stage2(arg: u64) noreturn {
-    _ = arg;
-
     vfs.init();
+
+    _ = proc.createProcess(null, "/usr/bin/oksh", &vfs.root) catch unreachable;
+    _ = arg;
 
     logger.err("init complete, end of kernel reached!", .{});
     sched.exit();
@@ -109,6 +111,7 @@ export fn entry() callconv(.C) noreturn {
     pmm.init();
     vmm.init();
     acpi.init();
+    proc.init();
 
     // boot all other cores, and setup the scheduler
     arch.trap.setHandler(sched.reschedule, sched.TIMER_VECTOR);

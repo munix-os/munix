@@ -1,7 +1,7 @@
 .POSIX:
 .PHONY: all all-hdd run run-uefi run-hdd run-hdd-uefi
 
-QEMU_COMMON_FLAGS = -M q35 -m 2G -smp 2 --enable-kvm
+QEMU_COMMON_FLAGS = -cpu max --enable-kvm -M q35 -m 2G -smp 2
 
 all: munix.iso
 

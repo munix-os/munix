@@ -1,5 +1,6 @@
 const trap = @import("root").arch.trap;
 const arch = @import("root").arch;
+const proc = @import("root").proc;
 const smp = @import("root").smp;
 const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
@@ -11,6 +12,7 @@ pub const Thread = struct {
     context: trap.TrapFrame,
     kernel_stack: u64,
     id: usize = 0,
+    proc: *proc.Process,
 };
 
 pub const Node = struct {
@@ -97,7 +99,7 @@ fn getNextThread() *Thread {
         arch.ic.submitEoi(TIMER_VECTOR);
         arch.ic.oneshot(TIMER_VECTOR, 20);
 
-        // TODO: space swap to kernel space
+        vmm.kernel_pagemap.load();
         asm volatile ("sti");
         while (true) {}
     }
@@ -114,12 +116,12 @@ pub fn reschedule(frame: *trap.TrapFrame) callconv(.C) void {
     }
 
     var thread = getNextThread();
-
     smp.getCoreInfo().cur_thread = thread;
     smp.getCoreInfo().tss.rsp0 = thread.kernel_stack;
-    frame.* = thread.context;
 
-    // TODO: space swap
+    frame.* = thread.context;
+    thread.proc.pagemap.load();
+
     arch.ic.submitEoi(TIMER_VECTOR);
     arch.ic.oneshot(TIMER_VECTOR, 20);
 }

@@ -181,7 +181,7 @@ pub fn setupFpu() void {
             arch.wrmsr(0xda0, 0);
         }
 
-        wrxcr(0, @as(u64, result.eax) & supported_mask);
+        wrxcr(0, @as(u64, arch.cpuid(0xD, 0).eax) & supported_mask);
         result = arch.cpuid(0xD, 0);
 
         if (smp.getCoreInfo().is_bsp) {

@@ -2,7 +2,7 @@ const limine = @import("limine");
 const std = @import("std");
 const vmm = @import("root").vmm;
 
-const Bitmap = struct {
+pub const Bitmap = struct {
     bits: [*]u8,
     size: usize,
     last_free: usize = 0,
@@ -11,7 +11,7 @@ const Bitmap = struct {
         return self.bits[bit / 8] & @as(u8, 1) << @intCast(u3, bit % 8) != 0;
     }
 
-    fn mark(self: *Bitmap, bit: usize) void {
+    pub fn mark(self: *Bitmap, bit: usize) void {
         self.bits[bit / 8] |= @as(u8, 1) << @intCast(u3, bit % 8);
     }
 
@@ -35,14 +35,14 @@ const Bitmap = struct {
         }
     }
 
-    fn findFreeRange(self: *Bitmap, pages: usize, step_size: usize) ?u64 {
+    pub fn findFreeRange(self: *Bitmap, count: usize, step_size: usize) ?u64 {
         var i: usize = std.mem.alignBackward(self.last_free, step_size);
 
         while (i < self.size * 8) : (i += step_size) {
             if (!self.check(i)) {
                 var found = find_pages: {
                     var j: usize = 1;
-                    while (j < pages) : (j += 1) {
+                    while (j < count) : (j += 1) {
                         if (self.check(i + j)) {
                             break :find_pages false;
                         }
@@ -51,7 +51,7 @@ const Bitmap = struct {
                 };
 
                 if (found) {
-                    self.last_free = i + pages;
+                    self.last_free = i + count;
                     return i;
                 }
             }
@@ -59,7 +59,7 @@ const Bitmap = struct {
 
         if (self.last_free != 0) {
             self.last_free = 0;
-            return self.findFreeRange(pages, step_size);
+            return self.findFreeRange(count, step_size);
         } else {
             return null;
         }

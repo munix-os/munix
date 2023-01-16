@@ -83,6 +83,72 @@ pub const VfsNode = struct {
     }
 };
 
+pub const VStream = struct {
+    node: *VfsNode,
+    offset: u64,
+
+    pub const ReaderError = VfsError || std.os.PReadError || error{OutOfMemory} || error{NotImplemented};
+    pub const SeekError = error{};
+    pub const GetSeekPosError = error{};
+
+    pub const SeekableStream = std.io.SeekableStream(
+        *VStream,
+        SeekError,
+        GetSeekPosError,
+        VStream.seekTo,
+        VStream.seekBy,
+        VStream.getPosFn,
+        VStream.getEndPosFn,
+    );
+    pub const Reader = std.io.Reader(
+        *VStream,
+        ReaderError,
+        VStream.read,
+    );
+
+    pub fn init(nd: *VfsNode) @This() {
+        return @This(){
+            .node = nd,
+            .offset = 0,
+        };
+    }
+
+    fn seekTo(self: *VStream, offset: u64) SeekError!void {
+        self.offset = offset;
+    }
+
+    fn seekBy(self: *VStream, offset: i64) SeekError!void {
+        self.offset +%= @bitCast(u64, offset);
+    }
+
+    fn getPosFn(self: *VStream) GetSeekPosError!u64 {
+        return self.offset;
+    }
+
+    fn getEndPosFn(self: *VStream) GetSeekPosError!u64 {
+        _ = self;
+
+        return 0;
+    }
+
+    fn read(self: *VStream, buffer: []u8) ReaderError!usize {
+        return try self.node.vtable.read(
+            self.node,
+            @ptrCast([*]u8, buffer),
+            self.offset,
+            buffer.len,
+        );
+    }
+
+    pub fn seekableStream(self: *VStream) SeekableStream {
+        return .{ .context = self };
+    }
+
+    pub fn reader(self: *VStream) Reader {
+        return .{ .context = self };
+    }
+};
+
 pub fn createNode(
     parent_dir: ?*VfsNode,
     pathname: []const u8,
@@ -151,13 +217,17 @@ pub fn resolve(parent: ?*VfsNode, path: []const u8) !*VfsNode {
     var cur: *VfsNode = undefined;
     var iter = std.mem.split(u8, path, "/");
 
-    if (parent != null and path[0] != '/') {
-        cur = parent.?.flatten();
-    } else {
+    if (parent == null or path[0] == '/') {
         cur = root.flatten();
+    } else {
+        cur = parent.?.flatten();
     }
 
     while (iter.next()) |elem| {
+        if (elem.len == 0) {
+            continue;
+        }
+
         if (!cur.isDir()) {
             return error.InvalidPath;
         }
@@ -343,7 +413,7 @@ pub const CpioReader = struct {
 };
 
 pub export var mods_request: limine.ModuleRequest = .{};
-var root: VfsNode = undefined;
+pub var root: VfsNode = undefined;
 
 pub fn init() void {
     // fill in the root vfs node

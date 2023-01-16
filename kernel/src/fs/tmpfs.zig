@@ -33,7 +33,7 @@ fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs
         }
     }
 
-    std.mem.copy(u8, buffer[0..len], inode.base[0..len]);
+    std.mem.copy(u8, buffer[0..len], inode.base[offset .. offset + len]);
     return len;
 }
 
@@ -50,7 +50,7 @@ fn tmpfs_write(node: *vfs.VfsNode, buffer: [*]const u8, offset: u64, length: usi
         inode.base = try allocator().realloc(inode.base, inode.bytes);
     }
 
-    std.mem.copy(u8, inode.base[0..length], buffer[0..length]);
+    std.mem.copy(u8, inode.base[offset .. offset + length], buffer[0..length]);
     node.stat.st_size += @intCast(i64, length);
     return length;
 }

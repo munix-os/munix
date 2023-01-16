@@ -1,5 +1,6 @@
 const limine = @import("limine");
 const paging = @import("root").arch.paging;
+const allocator = @import("root").allocator;
 const pmm = @import("root").pmm;
 const std = @import("std");
 
@@ -25,6 +26,22 @@ pub fn toHigherHalf(ptr: usize) usize {
 
 pub fn fromHigherHalf(ptr: usize) usize {
     return ptr - DEFAULT_HIGHER_HALF;
+}
+
+pub fn createPagemap() !*paging.PageMap {
+    var result = try allocator().create(paging.PageMap);
+    result.* = .{ .root = pmm.allocPages(1) orelse return error.OutOfMemory };
+
+    // copy over the higher half
+    var higher_half = @intToPtr([*]u64, toHigherHalf(result.root + (256 * @sizeOf(u64))));
+    var kernel_half = @intToPtr([*]u64, toHigherHalf(kernel_pagemap.root + (256 * @sizeOf(u64))));
+    var i: u64 = 256;
+
+    while (i < 512) : (i += 1) {
+        higher_half[i] = kernel_half[i];
+    }
+
+    return result;
 }
 
 pub fn init() void {
