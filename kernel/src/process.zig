@@ -41,8 +41,11 @@ fn loadImage(proc: *Process, image_path: []const u8, base: u64) !ElfImage {
     while (try phdrs.next()) |p| {
         switch (p.p_type) {
             std.elf.PT_INTERP => {
-                result.dyld_path = try allocator().alloc(u8, p.p_filesz);
-                _ = try image.vtable.read(image, @ptrCast([*]u8, result.dyld_path.?), p.p_offset, p.p_filesz);
+                var linker_path = try allocator().alloc(u8, p.p_filesz);
+                const termed_str = @ptrCast([*:0]u8, linker_path);
+                _ = try image.vtable.read(image, @ptrCast([*]u8, linker_path), p.p_offset, p.p_filesz);
+
+                result.dyld_path = termed_str[0..std.mem.len(termed_str)];
             },
             std.elf.PT_PHDR => result.phdr = p.p_vaddr + base,
             std.elf.PT_LOAD => {

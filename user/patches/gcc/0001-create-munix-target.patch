@@ -76,7 +76,7 @@ new file mode 100644
 index 000000000..f740a7845
 --- /dev/null
 +++ b/gcc/config/munix.h
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,30 @@
 +#undef TARGET_MUNIX
 +#define TARGET_MUNIX 1
 +
@@ -93,9 +93,10 @@ index 000000000..f740a7845
 +#define GNU_USER_LINK_EMULATION64 "elf_x86_64"
 +#define GNU_USER_LINK_EMULATIONX32 "elf32_x86_64"
 +
-+#define GNU_USER_DYNAMIC_LINKER32 "/lib/ld-musl-i386.so.1"
-+#define GNU_USER_DYNAMIC_LINKER64 "/lib/ld-musl-x86_64.so.1"
-+#define GNU_USER_DYNAMIC_LINKERX32 "/lib/ld-musl-i386.so.1"
++/* musl puts the dynamic linker within the libc... */
++#define GNU_USER_DYNAMIC_LINKER32 "/usr/lib/libc.so"
++#define GNU_USER_DYNAMIC_LINKER64 "/usr/lib/libc.so"
++#define GNU_USER_DYNAMIC_LINKERX32 "/usr/lib/libc.so"
 +
 +#undef TARGET_OS_CPP_BUILTINS
 +#define TARGET_OS_CPP_BUILTINS()         \

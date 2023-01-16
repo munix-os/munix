@@ -95,7 +95,10 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
 fn stage2(arg: u64) noreturn {
     vfs.init();
 
-    _ = proc.createProcess(null, "/usr/bin/oksh", &vfs.root) catch unreachable;
+    _ = proc.createProcess(null, "/usr/bin/init", &vfs.root) catch |e| {
+        logger.err("error is {any}", .{e});
+        while (true) {}
+    };
     _ = arg;
 
     logger.err("init complete, end of kernel reached!", .{});

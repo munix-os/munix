@@ -7,5 +7,10 @@ user/build
 user/bundled
 user/ports
 user/initrd.img
+*.xbstrap
 *.hdd
 *.iso
+
+# util-munix stuff
+user/util-munix/init
+user/util-munix/util-munix
