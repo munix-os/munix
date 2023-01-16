@@ -5,9 +5,15 @@ const smp = @import("root").smp;
 const arch = @import("root").arch;
 const sink = std.log.scoped(.apic);
 
+const TimerMode = enum(u4) {
+    tsc,
+    lapic,
+    unknown,
+};
+
 pub const LapicController = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
-    ext_space_capable: bool = false,
+    tsc_mode: TimerMode = .unknown,
 
     // general regs
     const REG_VER = 0x30;
@@ -19,11 +25,6 @@ pub const LapicController = struct {
     const REG_TIMER_INIT = 0x380;
     const REG_TIMER_CNT = 0x390;
     const REG_TIMER_DIV = 0x3E0;
-
-    // extended apic regs
-    const REG_EAC_FEATURES = 0x400;
-    const REG_EAC_CONTROL = 0x410;
-    const REG_EAC_SEOI = 0x420;
 
     pub fn setup(self: *LapicController) void {
         var mmio_base = vmm.toHigherHalf(arch.rdmsr(0x1B) & 0xFFFFF000);
@@ -38,12 +39,19 @@ pub const LapicController = struct {
         vmm.kernel_pagemap.unmapPage(aligned_base);
         vmm.kernel_pagemap.mapPage(map_flags, aligned_base, vmm.fromHigherHalf(aligned_base), true);
 
-        if ((self.read(REG_VER) & (1 << 31)) != 0) {
-            self.ext_space_capable = true;
-            sink.info("APIC supports AMD specific ERS (Extended Register Space)", .{});
-        }
-
+        // enable the APIC
         self.enable();
+
+        // print TSC frequency (if we're using it)
+        if (self.canUseTsc()) {
+            var n = smp.getCoreInfo().ticks_per_ms / 1000;
+            var d4 = (n % 10);
+            var d3 = (n / 10) % 10;
+            var d2 = (n / 100) % 10;
+            var d1 = (n / 1000);
+
+            sink.info("lapic: CPU frequency is {}.{}{}{} GHz", .{ d1, d2, d3, d4 });
+        }
     }
 
     pub fn read(self: *LapicController, reg: u32) u32 {
@@ -54,42 +62,61 @@ pub const LapicController = struct {
         @intToPtr(*volatile u32, self.mmio_base + reg).* = value;
     }
 
-    pub fn enable(self: *LapicController) void {
-        if ((self.read(REG_VER) & (1 << 31)) != 0) {
-            // check for XAIDC (Ext APIC-ID Capable) and SNIC (Specific EOI Capable)
-            var supported_feats = self.read(REG_EAC_FEATURES);
-
-            // enable all supported features
-            self.write(REG_EAC_CONTROL, supported_feats & 0b110);
+    inline fn canUseTsc(self: *LapicController) bool {
+        if (self.tsc_mode == .lapic) {
+            return false;
+        } else if (self.tsc_mode == .tsc) {
+            return true;
+        } else {
+            if (arch.cpuid(0x1, 0).ecx & (1 << 24) == 0 and
+                arch.cpuid(0x80000007, 0).edx & (1 << 8) == 0)
+            {
+                self.tsc_mode = .tsc;
+                return true;
+            } else {
+                self.tsc_mode = .lapic;
+                return false;
+            }
         }
+    }
 
+    pub fn enable(self: *LapicController) void {
         // enable the APIC
         arch.wrmsr(0x1B, arch.rdmsr(0x1B) | (1 << 11));
         self.write(REG_SPURIOUS, self.read(REG_SPURIOUS) | (1 << 8) | 0xFF);
 
-        // on certain platforms (simics and some KVM machines), the
-        // timer starts counting as soon as the APIC is enabled.
-        // therefore, we must stop the timer before calibration...
-        self.write(REG_TIMER_INIT, 0);
+        if (self.canUseTsc()) {
+            // calibrate the TSC
+            var i: usize = 0;
+            while (i < 5) : (i += 1) {
+                var initial = arch.rdtsc();
+                acpi.pmSleep(4);
+                smp.getCoreInfo().ticks_per_ms += (arch.rdtsc() - initial) / 4;
+            }
 
-        // calibrate the APIC timer (using a 10ms sleep)
-        self.write(REG_TIMER_DIV, 0x3);
-        self.write(REG_TIMER_LVT, 0xFF | (1 << 16));
-        self.write(REG_TIMER_INIT, std.math.maxInt(u32));
-        acpi.pmSleep(10);
+            smp.getCoreInfo().ticks_per_ms /= 5;
+        } else {
+            // on certain platforms (simics and some KVM machines), the
+            // timer starts counting as soon as the APIC is enabled.
+            // therefore, we must stop the timer before calibration...
+            self.write(REG_TIMER_INIT, 0);
 
-        // set the frequency, then set the timer back to a disabled state
-        smp.getCoreInfo().ticks_per_ms = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
-        self.write(REG_TIMER_INIT, 0);
-        self.write(REG_TIMER_LVT, (1 << 16));
+            // calibrate the APIC timer (using a 10ms sleep)
+            self.write(REG_TIMER_DIV, 0x3);
+            self.write(REG_TIMER_LVT, 0xFF | (1 << 16));
+            self.write(REG_TIMER_INIT, std.math.maxInt(u32));
+            acpi.pmSleep(10);
+
+            // set the frequency, then set the timer back to a disabled state
+            smp.getCoreInfo().ticks_per_ms = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
+            self.write(REG_TIMER_INIT, 0);
+            self.write(REG_TIMER_LVT, (1 << 16));
+        }
     }
 
     pub fn submitEoi(self: *LapicController, irq: u8) void {
-        if (self.ext_space_capable and self.read(REG_EAC_FEATURES) & (1 << 1) == 0) {
-            self.write(REG_EAC_SEOI, irq);
-        } else {
-            self.write(REG_EOI, 0);
-        }
+        _ = irq;
+        self.write(REG_EOI, 0);
     }
 
     pub fn oneshot(self: *LapicController, vec: u8, ms: u64) void {
@@ -99,7 +126,13 @@ pub const LapicController = struct {
 
         // set the deadline, and off we go!
         var deadline = @truncate(u32, smp.getCoreInfo().ticks_per_ms * ms);
-        self.write(REG_TIMER_LVT, vec);
-        self.write(REG_TIMER_INIT, deadline);
+
+        if (self.canUseTsc()) {
+            self.write(REG_TIMER_LVT, @as(u32, vec) | (1 << 18));
+            arch.wrmsr(0x6E0, deadline);
+        } else {
+            self.write(REG_TIMER_LVT, vec);
+            self.write(REG_TIMER_INIT, deadline);
+        }
     }
 };

@@ -159,4 +159,9 @@ pub fn init() void {
 
         while (booted_cores.load(.Monotonic) != resp.cpu_count) {}
     }
+
+    var brand: [12]u32 = undefined;
+    if (arch.cpu.getBrandName(@ptrCast([*]u32, &brand))) |name| {
+        sink.info("core name is {s}", .{name});
+    }
 }

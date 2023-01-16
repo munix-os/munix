@@ -108,7 +108,7 @@ pub fn createProcess(parent: ?*Process, exe_path: []const u8, starting_dir: *vfs
 
     var file = try loadImage(process, exe_path, 0);
     if (file.dyld_path != null) {
-        var ld_file = try loadImage(process, file.dyld_path, 0x4000_0000);
+        var ld_file = try loadImage(process, file.dyld_path.?, 0x4000_0000);
         _ = ld_file;
     }
 

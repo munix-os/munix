@@ -137,6 +137,18 @@ pub fn loadTSS(tss: *TSS) void {
     );
 }
 
+pub fn rdtsc() u64 {
+    var low: u32 = undefined;
+    var high: u32 = undefined;
+
+    asm volatile ("rdtsc"
+        : [_] "={eax}" (low),
+          [_] "={edx}" (high),
+    );
+
+    return @as(u64, low) | (@as(u64, high) << 32);
+}
+
 pub fn wrmsr(reg: u64, val: u64) void {
     asm volatile ("wrmsr"
         :

@@ -129,11 +129,12 @@ pub fn reschedule(frame: *trap.TrapFrame) callconv(.C) void {
 pub fn spawnKernelThread(func: *const fn (u64) noreturn, arg: ?u64) !*Thread {
     const target = @import("builtin").target.cpu.arch;
     const mem = @import("std").mem;
-
     var thread = try allocator().create(Thread);
+    errdefer allocator().destroy(thread);
+
     thread.kernel_stack = createKernelStack() orelse return error.OutOfMemory;
     thread.context = mem.zeroes(trap.TrapFrame);
-    errdefer allocator().destroy(thread);
+    thread.proc = &proc.kernel_process;
 
     switch (target) {
         .x86_64 => {

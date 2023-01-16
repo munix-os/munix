@@ -158,6 +158,20 @@ pub fn fpuSave(save_area: []const u8) void {
     }
 }
 
+pub fn getBrandName(brand: [*]u32) ?[]u8 {
+    var leaf1 = arch.cpuid(0x80000002, 0);
+    var leaf2 = arch.cpuid(0x80000003, 0);
+    var leaf3 = arch.cpuid(0x80000004, 0);
+
+    brand[0..12].* = .{
+        leaf1.eax, leaf1.ebx, leaf1.ecx, leaf1.edx,
+        leaf2.eax, leaf2.ebx, leaf2.ecx, leaf2.edx,
+        leaf3.eax, leaf3.ebx, leaf3.ecx, leaf3.edx,
+    };
+
+    return @ptrCast([*]u8, brand)[0 .. 12 * 4];
+}
+
 pub fn setupFpu() void {
     // enable SSE & FXSAVE/FXRSTOR
     arch.wrcr4(arch.rdcr4() | (3 << 9));
