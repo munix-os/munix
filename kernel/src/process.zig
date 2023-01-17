@@ -49,7 +49,7 @@ fn loadImage(proc: *Process, image_path: []const u8, base: u64) !ElfImage {
             },
             std.elf.PT_PHDR => result.phdr = p.p_vaddr + base,
             std.elf.PT_LOAD => {
-                var misalign = p.p_vaddr & (pmm.PAGE_SIZE - 1);
+                var misalign = p.p_vaddr & (std.mem.page_size - 1);
                 var map_flags: vmm.MapFlags = .{ .read = true, .user = true };
 
                 if (p.p_flags & std.elf.PF_W != 0)
@@ -58,16 +58,16 @@ fn loadImage(proc: *Process, image_path: []const u8, base: u64) !ElfImage {
                 if (p.p_flags & std.elf.PF_X != 0)
                     map_flags.exec = true;
 
-                const n_pages = std.mem.alignForward(p.p_memsz + misalign, pmm.PAGE_SIZE) / pmm.PAGE_SIZE;
+                const n_pages = std.mem.alignForward(p.p_memsz + misalign, std.mem.page_size) / std.mem.page_size;
                 const pbase = pmm.allocPages(n_pages) orelse return error.OutOfMemory;
-                const vbase = std.mem.alignBackward(p.p_vaddr, pmm.PAGE_SIZE) + base;
+                const vbase = std.mem.alignBackward(p.p_vaddr, std.mem.page_size) + base;
 
                 var i: u64 = 0;
                 while (i < n_pages) : (i += 1) {
                     proc.pagemap.mapPage(
                         map_flags,
-                        vbase + (i * pmm.PAGE_SIZE),
-                        pbase + (i * pmm.PAGE_SIZE),
+                        vbase + (i * std.mem.page_size),
+                        pbase + (i * std.mem.page_size),
                         false,
                     );
                 }

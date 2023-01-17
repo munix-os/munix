@@ -1,10 +1,10 @@
-const types = @import("../types.zig");
 const vfs = @import("root").vfs;
 const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
 const std = @import("std");
 
 const allocator = @import("root").allocator;
+const types = @import("../util/libc.zig");
 
 // export so we can use for initramfs
 pub const TmpfsContext = struct {

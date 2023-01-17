@@ -158,7 +158,11 @@ pub fn fpuSave(save_area: []const u8) void {
     }
 }
 
-pub fn getBrandName(brand: [*]u32) ?[]u8 {
+pub fn printBrandName() void {
+    if (!smp.getCoreInfo().is_bsp)
+        return;
+
+    var brand: [12]u32 = undefined;
     var leaf1 = arch.cpuid(0x80000002, 0);
     var leaf2 = arch.cpuid(0x80000003, 0);
     var leaf3 = arch.cpuid(0x80000004, 0);
@@ -169,7 +173,7 @@ pub fn getBrandName(brand: [*]u32) ?[]u8 {
         leaf3.eax, leaf3.ebx, leaf3.ecx, leaf3.edx,
     };
 
-    return @ptrCast([*]u8, brand)[0 .. 12 * 4];
+    sink.info("core name is \"{s}\"", .{@ptrCast([*]u8, &brand)[0 .. 12 * 4]});
 }
 
 pub fn setupFpu() void {
@@ -229,7 +233,8 @@ pub fn setupFpu() void {
 }
 
 pub fn init() void {
-    // setup the FPU first
+    // print CPU name and FPU information
+    printBrandName();
     setupFpu();
 
     // set the CPU to a acceptable state

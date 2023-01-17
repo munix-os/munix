@@ -1,6 +1,9 @@
 const limine = @import("limine");
 const std = @import("std");
+const smp = @import("root").smp;
 const vmm = @import("root").vmm;
+const sink = std.log.scoped(.pmm);
+const PAGE_SIZE = std.mem.page_size;
 
 pub const Bitmap = struct {
     bits: [*]u8,
@@ -114,14 +117,10 @@ pub const PageAllocator = struct {
     }
 };
 
-// TODO(cleanbaja): move this constants somewhere else in the
-// next refactor (proably arch.zig)
-pub const PAGE_SIZE = 4096;
-
 pub export var memmap_request: limine.MemoryMapRequest = .{};
 pub var page_allocator = PageAllocator{};
 var global_bitmap: Bitmap = undefined;
-var pmm_lock = @import("root").smp.SpinLock{};
+var pmm_lock = smp.SpinLock{};
 
 fn getKindName(kind: anytype) []const u8 {
     return switch (kind) {
@@ -137,7 +136,6 @@ fn getKindName(kind: anytype) []const u8 {
 }
 
 pub fn init() void {
-    const sink = @import("std").log.scoped(.pmm);
     var highest_addr: u64 = 0;
 
     if (memmap_request.response) |resp| {

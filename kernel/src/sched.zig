@@ -4,6 +4,7 @@ const proc = @import("root").proc;
 const smp = @import("root").smp;
 const pmm = @import("root").pmm;
 const vmm = @import("root").vmm;
+const std = @import("std");
 
 const allocator = @import("root").allocator;
 
@@ -81,7 +82,7 @@ pub fn exit() noreturn {
 
 pub fn createKernelStack() ?u64 {
     if (pmm.allocPages(4)) |page| {
-        return vmm.toHigherHalf(page + 4 * pmm.PAGE_SIZE);
+        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
     } else {
         return null;
     }

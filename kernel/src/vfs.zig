@@ -7,7 +7,7 @@ const allocator = @import("root").allocator;
 
 // modules
 const tmpfs = @import("fs/tmpfs.zig");
-const types = @import("types.zig");
+const libc = @import("util/libc.zig");
 
 pub const VfsError = error{
     OutOfMemory,
@@ -24,7 +24,7 @@ pub const VTable = struct {
 };
 
 pub const FsVTable = struct {
-    create: *const fn (parent: *VfsNode, name: []const u8, st: types.Stat) VfsError!*VfsNode,
+    create: *const fn (parent: *VfsNode, name: []const u8, st: libc.Stat) VfsError!*VfsNode,
 };
 
 pub const Filesystem = struct {
@@ -34,7 +34,7 @@ pub const Filesystem = struct {
 
 pub const VfsNode = struct {
     name: []const u8 = undefined,
-    stat: types.Stat = undefined,
+    stat: libc.Stat = undefined,
     children: std.ArrayList(*VfsNode) = undefined,
     parent: *VfsNode = undefined,
 
@@ -45,7 +45,7 @@ pub const VfsNode = struct {
     lock: smp.SpinLock = .{},
 
     pub fn isDir(self: *VfsNode) bool {
-        if ((self.stat.st_mode & types.StatFlags.S_IFDIR) != 0) {
+        if ((self.stat.st_mode & libc.S_IFDIR) != 0) {
             return true;
         } else {
             return false;
@@ -152,7 +152,7 @@ pub const VStream = struct {
 pub fn createNode(
     parent_dir: ?*VfsNode,
     pathname: []const u8,
-    st: types.Stat,
+    st: libc.Stat,
     fs: *const Filesystem,
     vtable: *const VTable,
     add: bool,
@@ -245,7 +245,7 @@ pub fn resolve(parent: ?*VfsNode, path: []const u8) !*VfsNode {
 pub fn createDeepNode(
     parent_dir: ?*VfsNode,
     pathname: []const u8,
-    st: types.Stat,
+    st: libc.Stat,
     fs: *Filesystem,
     vtable: *const VTable,
 ) !*VfsNode {
@@ -257,7 +257,7 @@ pub fn createDeepNode(
     }
 
     var iter = std.mem.split(u8, pathname, "/");
-    var stat = std.mem.zeroes(types.Stat);
+    var stat = std.mem.zeroes(libc.Stat);
 
     while (iter.next()) |elem| {
         if (!cur.isDir()) {
@@ -281,7 +281,7 @@ pub fn createDeepNode(
     return cur;
 }
 
-pub fn mount(target: *VfsNode, st: types.Stat, fs: *const Filesystem, vtable: *const VTable) !void {
+pub fn mount(target: *VfsNode, st: libc.Stat, fs: *const Filesystem, vtable: *const VTable) !void {
     if (!target.isDir()) {
         return error.FileNotDir;
     }
@@ -418,8 +418,8 @@ pub var root: VfsNode = undefined;
 pub fn init() void {
     // fill in the root vfs node
     root.name = "/";
-    root.stat = zeroes(types.Stat);
-    root.stat.st_mode = types.StatFlags.S_IFDIR;
+    root.stat = zeroes(libc.Stat);
+    root.stat.st_mode = libc.S_IFDIR;
 
     // create tmpfs context
     var context = allocator().create(tmpfs.TmpfsContext) catch unreachable;
@@ -434,7 +434,7 @@ pub fn init() void {
     if (mods_request.response) |resp| {
         var mod = resp.modules()[0];
         var reader = CpioReader.init(mod.address[0..mod.size]);
-        var stat = std.mem.zeroes(types.Stat);
+        var stat = std.mem.zeroes(libc.Stat);
 
         sink.info("initrd format is \"{s}\"", .{@tagName(reader.getVersion())});
 
