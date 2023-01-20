@@ -1,3 +1,15 @@
+const std = @import("std");
+const sched = @import("root").sched;
+const arch = @import("root").arch;
+
+const TrapStub = *const fn () callconv(.Naked) void;
+const TrapHandler = *const fn (*TrapFrame) callconv(.C) void;
+const log = std.log.scoped(.trap).err;
+
+export var handlers = [_]TrapHandler{handleException} ** 32 ++ [_]TrapHandler{handleIrq} ** 224;
+var entries: [256]Entry = undefined;
+var entries_generated: bool = false;
+
 pub const TrapFrame = extern struct {
     rax: u64,
     rbx: u64,
@@ -60,21 +72,27 @@ const Entry = packed struct {
     }
 };
 
-const TrapStub = *const fn () callconv(.Naked) void;
-const TrapHandler = *const fn (*TrapFrame) callconv(.C) void;
-var entries: [256]Entry = undefined;
-
-export var handlers: [256]TrapHandler = [_]TrapHandler{handleException} ** 32 ++ [_]TrapHandler{handleIrq} ** 224;
-
 pub fn setHandler(func: anytype, vec: u8) void {
     handlers[vec] = func;
 }
 
 pub fn load() void {
-    const idtr = @import("root").arch.Descriptor{
+    const idtr = arch.Descriptor{
         .size = @as(u16, (@sizeOf(Entry) * 256) - 1),
         .ptr = @ptrToInt(&entries),
     };
+
+    if (!entries_generated) {
+        for (genStubTable()) |stub, idx| {
+            if (idx == sched.TIMER_VECTOR) {
+                entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 1);
+            } else {
+                entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
+            }
+        }
+
+        entries_generated = true;
+    }
 
     asm volatile ("lidt %[idtr]"
         :
@@ -82,27 +100,15 @@ pub fn load() void {
     );
 }
 
-pub fn init() void {
-    for (genStubTable()) |stub, idx| {
-        if (idx == @import("root").sched.TIMER_VECTOR) {
-            entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 1);
-        } else {
-            entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
-        }
-    }
-
-    load();
-}
-
 fn handleIrq(frame: *TrapFrame) callconv(.C) void {
-    const log = @import("std").log.scoped(.trap).err;
     log("CPU triggered IRQ #{}, which has no handler!", .{frame.vec});
 
-    @panic("unhandled IRQ!!!");
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
 
 fn handleException(frame: *TrapFrame) callconv(.C) void {
-    const log = @import("std").log.scoped(.trap).err;
     log("CPU Exception #{}: ", .{frame.vec});
     frame.dump(log);
 

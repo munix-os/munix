@@ -159,7 +159,7 @@ pub fn fpuSave(save_area: []const u8) void {
 }
 
 pub fn printBrandName() void {
-    if (!smp.getCoreInfo().is_bsp)
+    if (!smp.isBsp())
         return;
 
     var brand: [12]u32 = undefined;
@@ -173,7 +173,7 @@ pub fn printBrandName() void {
         leaf3.eax, leaf3.ebx, leaf3.ecx, leaf3.edx,
     };
 
-    sink.info("core name is \"{s}\"", .{@ptrCast([*]u8, &brand)[0 .. 12 * 4]});
+    sink.info("core name is {s}", .{@ptrCast([*]u8, &brand)[0 .. 12 * 4]});
 }
 
 pub fn setupFpu() void {
@@ -202,7 +202,7 @@ pub fn setupFpu() void {
         wrxcr(0, @as(u64, arch.cpuid(0xD, 0).eax) & supported_mask);
         result = arch.cpuid(0xD, 0);
 
-        if (smp.getCoreInfo().is_bsp) {
+        if (smp.isBsp()) {
             sink.info("supported extensions bitmask: 0x{X}", .{result.eax});
         }
 
@@ -224,7 +224,7 @@ pub fn setupFpu() void {
         fpu_mode = .fxsave;
     }
 
-    if (smp.getCoreInfo().is_bsp) {
+    if (smp.isBsp()) {
         sink.info(
             "using \"{s}\" instruction (with size={}) for FPU context management",
             .{ @tagName(fpu_mode), fpu_storage_size },

@@ -1,13 +1,22 @@
-const logger = @import("std").log.scoped(.arch);
 const std = @import("std");
+const smp = @import("root").smp;
+const lapic = @import("lapic.zig");
+const logger = std.log.scoped(.arch);
 
 // modules
 pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
 pub const cpu = @import("cpu.zig");
 
-// exports
-pub var ic = @import("lapic.zig").LapicController{};
+// globals
+pub var ic = lapic.LapicController{};
+var gdt_lock = smp.SpinLock{};
+var gdt_table = GDT{};
+
+pub const Descriptor = extern struct {
+    size: u16 align(1),
+    ptr: u64 align(1),
+};
 
 const CpuidResult = struct {
     eax: u32,
@@ -80,6 +89,10 @@ const GDT = extern struct {
             .ptr = @ptrToInt(self),
         };
 
+        // Reloading the GDT clears the GS base, so take
+        // note of the current value here for later...
+        var gs_base = rdmsr(0xC0000101);
+
         asm volatile (
             \\lgdt %[gdtr]
             \\push $0x28
@@ -97,6 +110,8 @@ const GDT = extern struct {
             : [gdtr] "*p" (&gdtr),
             : "rax", "rcx", "memory"
         );
+
+        wrmsr(0xC0000101, gs_base);
     }
 };
 
@@ -228,18 +243,15 @@ pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
     };
 }
 
-pub const Descriptor = extern struct { size: u16 align(1), ptr: u64 align(1) };
-var gdt_table = GDT{};
-var gdt_lock = @import("root").smp.SpinLock{};
-
-pub fn setupAP() void {
+pub fn setupCpu() void {
     gdt_table.load();
     trap.load();
+    cpu.init();
 }
 
-pub fn setupCpu() void {
-    logger.info("performing early cpu init...", .{});
-    trap.init();
-
-    setupAP();
-}
+//pub fn setupCpu() void {
+//    logger.info("performing early cpu init...", .{});
+//    trap.init();
+//
+//    setupAP();
+//}

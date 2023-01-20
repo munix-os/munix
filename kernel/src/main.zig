@@ -109,6 +109,14 @@ export fn entry() callconv(.C) noreturn {
     limine_terminal_cr3 = arch.paging.saveSpace();
     logger.info("hello from munix!", .{});
 
+    kernel_main() catch |e| {
+        logger.err("init failed with error: {any}", .{e});
+    };
+
+    while (true) {}
+}
+
+fn kernel_main() !void {
     // setup the essentials
     arch.setupCpu();
     pmm.init();
@@ -123,5 +131,4 @@ export fn entry() callconv(.C) noreturn {
 
     // enter the scheduler, and continue init in stage2
     sched.enter();
-    while (true) {}
 }

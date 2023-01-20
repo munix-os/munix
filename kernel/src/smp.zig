@@ -35,6 +35,7 @@ pub const SpinLock = struct {
             // Therefore, we go with the XCHG instruction...
             // ------------------------------------------------
             // Source: https://agner.org/optimize/instruction_tables.pdf
+            //
             if (self.lock_bits.swap(1, .Acquire) == 0) {
                 // 'self.lock_bits.swap' translates to a XCHG
                 break;
@@ -79,7 +80,24 @@ pub const CoreInfo = struct {
     cur_thread: ?*sched.Thread = null,
 };
 
-pub fn getCoreInfo() *CoreInfo {
+pub inline fn isBsp() bool {
+    switch (target.cpu.arch) {
+        .x86_64 => {
+            // Since this function is called before
+            // IA32_GS_BASE is set, make sure it exists
+            // or assume we're the BSP
+            if (arch.rdmsr(0xC0000101) == 0)
+                return true;
+
+            return getCoreInfo().is_bsp;
+        },
+        else => {
+            @compileError("unsupported arch " ++ @tagName(target.cpu.arch) ++ "!");
+        },
+    }
+}
+
+pub inline fn getCoreInfo() *CoreInfo {
     switch (target.cpu.arch) {
         .x86_64 => {
             return @intToPtr(*CoreInfo, arch.rdmsr(0xC0000101));
@@ -117,11 +135,10 @@ fn createCoreInfo(info: *limine.SmpInfo) void {
 
 pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
     // setup the important stuff
-    arch.setupAP();
     vmm.kernel_pagemap.load();
     createCoreInfo(info);
+    arch.setupCpu();
     arch.ic.enable();
-    arch.cpu.init();
 
     // load the TSS
     getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{
@@ -149,7 +166,6 @@ pub fn init() void {
                 getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
                 arch.loadTSS(&getCoreInfo().tss);
 
-                arch.cpu.init();
                 arch.ic.setup();
                 continue;
             }
