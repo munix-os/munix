@@ -160,12 +160,13 @@ pub fn getTable(signature: []const u8) ?*Header {
     return null;
 }
 
-pub fn pmSleep(ms: u64) void {
+pub fn pmSleep(us: u64) void {
     var shift: u64 = @as(u64, 1) << @truncate(u6, timer_bits);
+    var target = (us * 3) + ((us * 5) / 10) + ((us * 8) / 100);
 
     // find out how many 'remaining' ticks to wait after 'n' overflows
-    var n: u64 = (ms * 3580) / shift;
-    var remaining: u64 = (ms * 3580) % shift;
+    var n: u64 = target / shift;
+    var remaining: u64 = target % shift;
 
     // bump 'remaining' to reflect current timer state
     var cur_ticks = timer_block.read(u32);
@@ -199,73 +200,71 @@ pub fn pmSleep(ms: u64) void {
     }
 }
 
-pub fn init() void {
-    if (rsdp_request.response) |resp| {
-        // TODO(cleanbaja): find a way to fragment
-        // pages, so that we can map acpi tables,
-        // without modifying other pages
-        var xsdp = @intToPtr(*align(1) const XSDP, @ptrToInt(resp.address));
+pub fn init() !void {
+    var resp = rsdp_request.response orelse return error.MissingBootInfo;
 
-        if (xsdp.revision >= 2 and xsdp.xsdt != 0) {
-            xsdt = @intToPtr(*Header, vmm.toHigherHalf(xsdp.xsdt));
-        } else {
-            rsdt = @intToPtr(*Header, vmm.toHigherHalf(@intCast(usize, xsdp.rsdt)));
-        }
+    // TODO(cleanbaja): find a way to fragment
+    // pages, so that we can map acpi tables,
+    // without modifying other pages
+    var xsdp = @intToPtr(*align(1) const XSDP, @ptrToInt(resp.address));
 
-        if (xsdt) |x| {
-            var num_tables = (x.length - @sizeOf(Header)) / 8;
-            sink.info("dumping {} tables...", .{num_tables});
+    if (xsdp.revision >= 2 and xsdp.xsdt != 0) {
+        xsdt = @intToPtr(*Header, vmm.toHigherHalf(xsdp.xsdt));
+    } else {
+        rsdt = @intToPtr(*Header, vmm.toHigherHalf(@intCast(usize, xsdp.rsdt)));
+    }
 
-            for (getEntries(u64, x)) |ent| {
-                var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
-                printTable(entry);
-            }
-        } else {
-            var num_tables = (rsdt.?.length - @sizeOf(Header)) / 4;
-            sink.info("dumping {} tables...", .{num_tables});
+    if (xsdt) |x| {
+        var num_tables = (x.length - @sizeOf(Header)) / 8;
+        sink.info("dumping {} tables...", .{num_tables});
 
-            for (getEntries(u32, rsdt.?)) |ent| {
-                var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
-                printTable(entry);
-            }
-        }
-
-        // setup the ACPI timer
-        if (getTable("FACP")) |fadt_sdt| {
-            var fadt = @ptrCast(*align(1) const FADT, fadt_sdt.getContents()[0..]);
-
-            if (xsdp.revision >= 2 and fadt.x_pm_timer_blk.base_type == 0) {
-                timer_block = fadt.x_pm_timer_blk;
-                timer_block.base = vmm.toHigherHalf(timer_block.base);
-            } else {
-                if (fadt.pm_timer_blk == 0 or fadt.pm_timer_length != 4) {
-                    @panic("ACPI Timer is unsupported/malformed");
-                }
-
-                timer_block = GenericAddress{
-                    .base = fadt.pm_timer_blk,
-                    .base_type = 1,
-                    .bit_width = 32,
-                    .bit_offset = 0,
-                    .access_size = 0,
-                };
-            }
-
-            if ((fadt.flags & (1 << 8)) == 0) {
-                timer_bits = 32;
-            } else {
-                timer_bits = 24;
-            }
-
-            if (timer_block.base_type == 0) {
-                sink.info("detected MMIO acpi timer, with {}-bit counter width", .{timer_bits});
-            } else {
-                sink.info("detected PIO (Port IO) acpi timer, with {}-bit counter width", .{timer_bits});
-            }
-        } else {
-            @panic("unable to find FADT table (required for boot)");
+        for (getEntries(u64, x)) |ent| {
+            var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
+            printTable(entry);
         }
     } else {
-        @panic("system not ACPI compatible!");
+        var num_tables = (rsdt.?.length - @sizeOf(Header)) / 4;
+        sink.info("dumping {} tables...", .{num_tables});
+
+        for (getEntries(u32, rsdt.?)) |ent| {
+            var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
+            printTable(entry);
+        }
+    }
+
+    // setup the ACPI timer
+    if (getTable("FACP")) |fadt_sdt| {
+        var fadt = @ptrCast(*align(1) const FADT, fadt_sdt.getContents()[0..]);
+
+        if (xsdp.revision >= 2 and fadt.x_pm_timer_blk.base_type == 0) {
+            timer_block = fadt.x_pm_timer_blk;
+            timer_block.base = vmm.toHigherHalf(timer_block.base);
+        } else {
+            if (fadt.pm_timer_blk == 0 or fadt.pm_timer_length != 4) {
+                @panic("ACPI Timer is unsupported/malformed");
+            }
+
+            timer_block = GenericAddress{
+                .base = fadt.pm_timer_blk,
+                .base_type = 1,
+                .bit_width = 32,
+                .bit_offset = 0,
+                .access_size = 0,
+            };
+        }
+
+        if ((fadt.flags & (1 << 8)) == 0) {
+            timer_bits = 32;
+        } else {
+            timer_bits = 24;
+        }
+
+        if (timer_block.base_type == 0) {
+            sink.info("detected MMIO acpi timer, with {}-bit counter width", .{timer_bits});
+        } else {
+            sink.info("detected PIO (Port IO) acpi timer, with {}-bit counter width", .{timer_bits});
+        }
+    } else {
+        return error.InvalidHardware;
     }
 }

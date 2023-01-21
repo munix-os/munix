@@ -44,25 +44,24 @@ pub fn createPagemap() !*paging.PageMap {
     return result;
 }
 
-pub fn init() void {
-    kernel_pagemap.root = pmm.allocPages(1).?;
+pub fn init() !void {
+    kernel_pagemap.root = pmm.allocPages(1) orelse return error.OutOfMemory;
     var map_flags: MapFlags = .{ .read = true, .write = true, .exec = true };
 
     // map some simple stuff
-    if (kaddr_request.response) |r| {
-        var pbase: usize = r.physical_base;
-        var vbase: usize = r.virtual_base;
-        var i: usize = 0;
+    var resp = kaddr_request.response orelse return error.MissingBootInfo;
+    var pbase: usize = resp.physical_base;
+    var vbase: usize = resp.virtual_base;
+    var i: usize = 0;
 
-        while (i < (0x400 * 0x1000)) : (i += 0x1000) {
-            kernel_pagemap.mapPage(map_flags, vbase + i, pbase + i, false);
-        }
+    while (i < (0x400 * 0x1000)) : (i += 0x1000) {
+        kernel_pagemap.mapPage(map_flags, vbase + i, pbase + i, false);
+    }
 
-        i = 0;
-        map_flags.exec = false;
-        while (i < @intCast(usize, (0x800 * 0x200000))) : (i += 0x200000) {
-            kernel_pagemap.mapPage(map_flags, toHigherHalf(i), i, true);
-        }
+    i = 0;
+    map_flags.exec = false;
+    while (i < @intCast(usize, (0x800 * 0x200000))) : (i += 0x200000) {
+        kernel_pagemap.mapPage(map_flags, toHigherHalf(i), i, true);
     }
 
     // them map everything else
@@ -72,13 +71,12 @@ pub fn init() void {
         }
 
         var base: usize = std.mem.alignBackward(ent.base, 0x200000);
-        var i: usize = 0;
+        i = 0;
 
         while (i < std.mem.alignForward(ent.length, 0x200000)) : (i += 0x200000) {
             kernel_pagemap.mapPage(map_flags, toHigherHalf(base + i), base + i, true);
         }
     }
 
-    pmm.mapGlobalBitmap();
     kernel_pagemap.load();
 }

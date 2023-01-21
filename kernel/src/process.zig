@@ -118,7 +118,7 @@ pub fn createProcess(parent: ?*Process, exe_path: []const u8, starting_dir: *vfs
     return process;
 }
 
-pub fn init() void {
+pub fn init() !void {
     process_table = std.AutoHashMap(u32, *Process).init(allocator());
     kernel_process = .{
         .parent = null,
@@ -128,7 +128,7 @@ pub fn init() void {
         .children = std.ArrayList(*Process).init(allocator()),
     };
 
-    var pid_bitmap_mem = allocator().alloc(u8, MAX_PID_COUNT / 8) catch unreachable;
+    var pid_bitmap_mem = try allocator().alloc(u8, MAX_PID_COUNT / 8);
     pid_bitmap = .{
         .bits = @ptrCast([*]u8, pid_bitmap_mem),
         .size = MAX_PID_COUNT,

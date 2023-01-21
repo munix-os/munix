@@ -86,15 +86,18 @@ pub const LapicController = struct {
         self.write(REG_SPURIOUS, self.read(REG_SPURIOUS) | (1 << 8) | 0xFF);
 
         if (self.canUseTsc()) {
-            // calibrate the TSC
-            var i: usize = 0;
-            while (i < 5) : (i += 1) {
-                var initial = arch.rdtsc();
-                acpi.pmSleep(4);
-                smp.getCoreInfo().ticks_per_ms += (arch.rdtsc() - initial) / 4;
-            }
+            var initial = arch.rdtsc();
 
-            smp.getCoreInfo().ticks_per_ms /= 5;
+            // since AMD requires a "mfence" instruction to serialize the
+            // TSC, and Intel requires a "lfence", use both here (not a big
+            // deal since this is the only place where we need a serializing TSC)
+            asm volatile ("mfence; lfence" ::: "memory");
+
+            acpi.pmSleep(1000);
+            var final = arch.rdtsc();
+            asm volatile ("mfence; lfence" ::: "memory");
+
+            smp.getCoreInfo().ticks_per_ms = final - initial;
         } else {
             // on certain platforms (simics and some KVM machines), the
             // timer starts counting as soon as the APIC is enabled.
@@ -105,10 +108,10 @@ pub const LapicController = struct {
             self.write(REG_TIMER_DIV, 0x3);
             self.write(REG_TIMER_LVT, 0xFF | (1 << 16));
             self.write(REG_TIMER_INIT, std.math.maxInt(u32));
-            acpi.pmSleep(10);
+            acpi.pmSleep(1000);
 
             // set the frequency, then set the timer back to a disabled state
-            smp.getCoreInfo().ticks_per_ms = (std.math.maxInt(u32) - self.read(REG_TIMER_CNT)) / @as(u64, 10);
+            smp.getCoreInfo().ticks_per_ms = std.math.maxInt(u32) - self.read(REG_TIMER_CNT);
             self.write(REG_TIMER_INIT, 0);
             self.write(REG_TIMER_LVT, (1 << 16));
         }

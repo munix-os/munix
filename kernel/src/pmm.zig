@@ -1,5 +1,5 @@
-const limine = @import("limine");
 const std = @import("std");
+const limine = @import("limine");
 const smp = @import("root").smp;
 const vmm = @import("root").vmm;
 const sink = std.log.scoped(.pmm);
@@ -135,63 +135,48 @@ fn getKindName(kind: anytype) []const u8 {
     };
 }
 
-pub fn init() void {
+pub fn init() !void {
     var highest_addr: u64 = 0;
+    var resp = memmap_request.response orelse return error.MissingBootInfo;
 
-    if (memmap_request.response) |resp| {
-        sink.info("dumping memory map entries...", .{});
+    sink.info("dumping memory map entries...", .{});
 
-        // find highest addr (and dump memory map)
-        for (resp.entries()) |ent| {
-            sink.info("\tBase: {X:0>16}, Length: {X:0>8}, Type: {s}", .{ ent.base, ent.length, getKindName(ent.kind) });
-            highest_addr = std.math.max(highest_addr, ent.base + ent.length);
-        }
-
-        // find the size of the bitmap
-        var n_bits = highest_addr / PAGE_SIZE;
-        var n_bytes = std.mem.alignForward((n_bits / 8), PAGE_SIZE);
-
-        // find a entry that can hold the bitmap
-        for (resp.entries()) |ent| {
-            if (ent.length > n_bytes and ent.kind == .usable) {
-                ent.base += n_bytes;
-                ent.length -= n_bytes;
-
-                global_bitmap.bits = @intToPtr([*]u8, vmm.toHigherHalf(ent.base));
-                global_bitmap.size = n_bytes;
-            }
-        }
-
-        // clear the bitmap to all 0xFFs (reserved)
-        @memset(global_bitmap.bits, 0xFF, n_bytes);
-
-        // mark usable ranges in the global_bitmap
-        for (resp.entries()) |ent| {
-            if (ent.kind == .usable) {
-                global_bitmap.clearRange(ent.base / PAGE_SIZE, ent.length / PAGE_SIZE);
-            }
-        }
-
-        // finally, mark the bitmap itself as used
-        global_bitmap.markRange(vmm.fromHigherHalf(@ptrToInt(global_bitmap.bits)) / PAGE_SIZE, n_bytes / PAGE_SIZE);
-    } else {
-        @panic("bootloader did not pass memory map!");
-    }
-}
-
-pub fn mapGlobalBitmap() void {
-    var bitmap_base: usize = @ptrToInt(global_bitmap.bits);
-    var base: usize = std.mem.alignBackward(bitmap_base, 0x200000);
-    var flags: vmm.MapFlags = .{ .read = true, .write = true, .exec = false };
-    var i: usize = 0;
-
-    if (global_bitmap.size + bitmap_base < @intCast(usize, (0x800 * 0x200000))) {
-        return;
+    // find highest addr (and dump memory map)
+    for (resp.entries()) |ent| {
+        sink.info(
+            "\tBase: {X:0>16}, Length: {X:0>8}, Type: {s}",
+            .{ ent.base, ent.length, getKindName(ent.kind) },
+        );
+        highest_addr = std.math.max(highest_addr, ent.base + ent.length);
     }
 
-    while (i < std.mem.alignForward(global_bitmap.size, 0x200000)) : (i += 0x200000) {
-        vmm.kernel_pagemap.mapPage(flags, base + i, vmm.fromHigherHalf(base + i), true);
+    // find the size of the bitmap
+    var n_bits = highest_addr / PAGE_SIZE;
+    var n_bytes = std.mem.alignForward((n_bits / 8), PAGE_SIZE);
+
+    // find a entry that can hold the bitmap
+    for (resp.entries()) |ent| {
+        if (ent.length > n_bytes and ent.kind == .usable) {
+            ent.base += n_bytes;
+            ent.length -= n_bytes;
+
+            global_bitmap.bits = @intToPtr([*]u8, vmm.toHigherHalf(ent.base));
+            global_bitmap.size = n_bytes;
+        }
     }
+
+    // clear the bitmap to all 0xFFs (reserved)
+    @memset(global_bitmap.bits, 0xFF, n_bytes);
+
+    // mark usable ranges in the global_bitmap
+    for (resp.entries()) |ent| {
+        if (ent.kind == .usable) {
+            global_bitmap.clearRange(ent.base / PAGE_SIZE, ent.length / PAGE_SIZE);
+        }
+    }
+
+    // finally, mark the bitmap itself as used
+    global_bitmap.markRange(vmm.fromHigherHalf(@ptrToInt(global_bitmap.bits)) / PAGE_SIZE, n_bytes / PAGE_SIZE);
 }
 
 pub fn allocPages(count: usize) ?u64 {

@@ -96,12 +96,12 @@ fn stage2(arg: u64) noreturn {
     vfs.init();
 
     _ = proc.createProcess(null, "/usr/bin/init", &vfs.root) catch |e| {
-        logger.err("error is {any}", .{e});
+        logger.err("launching /usr/bin/init failed! (error={any})", .{e});
         while (true) {}
     };
     _ = arg;
 
-    logger.err("init complete, end of kernel reached!", .{});
+    logger.warn("init complete, end of kernel reached!", .{});
     sched.exit();
 }
 
@@ -119,14 +119,14 @@ export fn entry() callconv(.C) noreturn {
 fn kernel_main() !void {
     // setup the essentials
     arch.setupCpu();
-    pmm.init();
-    vmm.init();
-    acpi.init();
-    proc.init();
+    try pmm.init();
+    try vmm.init();
+    try acpi.init();
+    try proc.init();
 
     // boot all other cores, and setup the scheduler
     arch.trap.setHandler(sched.reschedule, sched.TIMER_VECTOR);
-    _ = sched.spawnKernelThread(stage2, null) catch unreachable;
+    _ = try sched.spawnKernelThread(stage2, null);
     smp.init();
 
     // enter the scheduler, and continue init in stage2
