@@ -161,8 +161,8 @@ pub fn spawnKernelThread(func: *const fn (u64) noreturn, arg: ?u64) !*Thread {
     return thread;
 }
 
-pub fn enter() void {
-    smp.getCoreInfo().tss.ist1 = createKernelStack().?;
+pub fn enable() !void {
+    smp.getCoreInfo().tss.ist1 = createKernelStack() orelse return error.OutOfMemory;
 
     arch.ic.oneshot(TIMER_VECTOR, 20);
     asm volatile ("sti");

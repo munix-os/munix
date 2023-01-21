@@ -130,5 +130,5 @@ fn kernel_main() !void {
     smp.init();
 
     // enter the scheduler, and continue init in stage2
-    sched.enter();
+    try sched.enable();
 }

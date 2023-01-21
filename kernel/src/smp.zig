@@ -148,7 +148,7 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
 
     // let BSP know we're done, then off we go!
     _ = booted_cores.fetchAdd(1, .Monotonic);
-    sched.enter();
+    sched.enable() catch unreachable;
     while (true) {}
 }
 

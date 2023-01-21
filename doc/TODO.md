@@ -12,8 +12,8 @@ by priority (from highest to lowest)...
 - [ ] Make error handling more graceful
 - [ ] Rewrite `README.md` (make it much more prettier and clear)
 - [ ] Clean up imports and dependencies across files
-- [ ] Redo the kernel initialization scheme (and fix the following issue as well)
-- [ ] Have initialization functions return errors, than collect them in `main.entry()`
+- [x] Redo the kernel initialization scheme (and fix the following issue as well)
+- [x] Have initialization functions return errors, than collect them in `main.entry()`
 - [ ] In-kernel stacktracing (using `std.dwarf`), since it helps on real hw
 
 #### Nice to have
