@@ -61,6 +61,10 @@ pub const SpinLock = struct {
         arch.setIntrMode(self.intr_mode);
     }
 
+    pub fn isLocked(self: *SpinLock) bool {
+        return self.lock_bits.load(.Monotonic) == 1;
+    }
+
     // wrappers for zig stdlib
     pub inline fn lock(self: *SpinLock) void {
         self.acq();

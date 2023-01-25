@@ -18,6 +18,12 @@ pub const Descriptor = extern struct {
     ptr: u64 align(1),
 };
 
+pub const Irql = enum(u4) {
+    passive,
+    active,
+    nopreempt,
+};
+
 const CpuidResult = struct {
     eax: u32,
     ebx: u32,
@@ -131,6 +137,13 @@ pub fn setIntrMode(enabled: bool) void {
     } else {
         asm volatile ("cli");
     }
+}
+
+pub fn setIrql(level: Irql) void {
+    asm volatile ("mov %[level], %%cr8"
+        :
+        : [level] "r" (@enumToInt(level)),
+    );
 }
 
 pub fn loadTSS(tss: *TSS) void {
