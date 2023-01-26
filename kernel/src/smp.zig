@@ -81,7 +81,7 @@ pub const CoreInfo = struct {
     user_stack: u64 = 0,
     tss: arch.TSS = .{},
     is_bsp: bool = false,
-    cur_thread: ?*sched.Thread = null,
+    tq: sched.ThreadQueue = .{},
 };
 
 pub inline fn isBsp() bool {
@@ -126,13 +126,13 @@ pub inline fn setCoreInfo(ptr: *CoreInfo) void {
 pub export var smp_request: limine.SmpRequest = .{};
 var booted_cores: AtomicType(u16) = .{ .value = 1 };
 
-fn createCoreInfo(info: *limine.SmpInfo) void {
-    var coreinfo = allocator().create(CoreInfo) catch unreachable;
+fn createCoreInfo(info: *limine.SmpInfo) !void {
+    var coreinfo = try allocator().create(CoreInfo);
 
-    coreinfo.* = zeroInit(CoreInfo, .{
+    coreinfo.* = .{
         .lapic_id = info.lapic_id,
         .processor_id = info.processor_id,
-    });
+    };
 
     setCoreInfo(coreinfo);
 }
@@ -140,7 +140,7 @@ fn createCoreInfo(info: *limine.SmpInfo) void {
 pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
     // setup the important stuff
     vmm.kernel_pagemap.load();
-    createCoreInfo(info);
+    createCoreInfo(info) catch unreachable;
     arch.setupCpu();
     arch.ic.enable();
 
@@ -152,31 +152,30 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
 
     // let BSP know we're done, then off we go!
     _ = booted_cores.fetchAdd(1, .Monotonic);
-    sched.enable() catch unreachable;
     while (true) {}
 }
 
-pub fn init() void {
-    if (smp_request.response) |resp| {
-        sink.info("booting {} cores...", .{resp.cpu_count});
+pub fn init() !void {
+    var resp = smp_request.response orelse return error.MissingBootInfo;
 
-        for (resp.cpus()) |cpu| {
-            if (cpu.lapic_id == resp.bsp_lapic_id) {
-                createCoreInfo(cpu);
-                getCoreInfo().is_bsp = true;
+    sink.info("booting {} cores...", .{resp.cpu_count});
 
-                // load the TSS
-                getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{});
-                getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
-                arch.loadTSS(&getCoreInfo().tss);
+    for (resp.cpus()) |cpu| {
+        if (cpu.lapic_id == resp.bsp_lapic_id) {
+            try createCoreInfo(cpu);
+            getCoreInfo().is_bsp = true;
 
-                arch.ic.setup();
-                continue;
-            }
+            // load the TSS
+            getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{});
+            getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
+            arch.loadTSS(&getCoreInfo().tss);
 
-            cpu.goto_address = &ap_entry;
+            arch.ic.setup();
+            continue;
         }
 
-        while (booted_cores.load(.Monotonic) != resp.cpu_count) {}
+        cpu.goto_address = &ap_entry;
     }
+
+    while (booted_cores.load(.Monotonic) != resp.cpu_count) {}
 }
