@@ -110,4 +110,5 @@ fn kernel_main() !void {
     try vmm.init();
     try acpi.init();
     try smp.init();
+    try sched.init();
 }

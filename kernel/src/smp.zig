@@ -4,10 +4,12 @@ const atomic = @import("std").atomic;
 const sched = @import("root").sched;
 const arch = @import("root").arch;
 const vmm = @import("root").vmm;
+const std = @import("std");
+const smp = @import("root").smp;
 
-const sink = @import("std").log.scoped(.smp);
-const zeroInit = @import("std").mem.zeroInit;
 const allocator = @import("root").allocator;
+const sink = std.log.scoped(.smp);
+const zeroInit = std.mem.zeroInit;
 const AtomicType = atomic.Atomic;
 
 pub const SpinLock = struct {
@@ -81,7 +83,7 @@ pub const CoreInfo = struct {
     user_stack: u64 = 0,
     tss: arch.TSS = .{},
     is_bsp: bool = false,
-    tq: sched.ThreadQueue = .{},
+    sched_info: sched.SchedInfo = .{},
 };
 
 pub inline fn isBsp() bool {
