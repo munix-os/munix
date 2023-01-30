@@ -103,6 +103,10 @@ pub inline fn isBsp() bool {
     }
 }
 
+pub inline fn getCoreId() u32 {
+    return getCoreInfo().processor_id;
+}
+
 pub inline fn getCoreInfo() *CoreInfo {
     switch (target.cpu.arch) {
         .x86_64 => {

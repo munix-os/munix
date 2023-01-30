@@ -1,3 +1,33 @@
+//
+// Code taken and modified from FreeBSD's ULE scheduler
+//
+// SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+//
+// Copyright (c) 2002-2007, Jeffrey Roberson <jeff@freebsd.org>
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice unmodified, this list of conditions, and the following
+//    disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+//
+// THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+// IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+// INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+// NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+// THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+
 const std = @import("std");
 const smp = @import("root").smp;
 const pmm = @import("root").pmm;
@@ -6,76 +36,28 @@ const arch = @import("root").arch;
 const trap = arch.trap;
 const sink = std.log.scoped(.sched);
 
-// tuneable parameters to the scheduler
-const DEFAULT_TIMESLICE = 20;
-const PRIO_MIN = -20;
-const PRIO_MAX = 20;
-const RQ_PRIO_COUNT = 64;
-const RQ_PPQ = 4;
-const NOCPU = -1; // For when we aren't on a CPU.
+//
+// Constants for the ULE scheduler.
+//
+// zig fmt: off
+//
 
-pub const TIMER_VECTOR = 0x20;
-const PRI_MIN_TIMESHARE = 88;
-const PRI_MAX_TIMESHARE = PRI_MIN_IDLE - 1;
-const PRI_MIN_IDLE = 224;
-const PRI_MAX = 255; // Lowest priority.
-const PRI_MAX_IDLE = PRI_MAX;
-const MAX_CACHE_LEVELS = 2;
+//
+// RunQueue constants
+//
+const RQ_PRIO_COUNT = 64; // Number of run queues.
+const RQ_PPQ = 4;         // Priorities per queue.
 
-const SCHED_PRI_NRESV = PRIO_MAX - PRIO_MIN;
-const SCHED_PRI_NHALF = (SCHED_PRI_NRESV / 2);
-const SCHED_PRI_MIN = (PRI_MIN_BATCH + SCHED_PRI_NHALF);
-const SCHED_PRI_MAX = (PRI_MAX_BATCH - SCHED_PRI_NHALF);
-const SCHED_PRI_RANGE = SCHED_PRI_MAX - SCHED_PRI_MIN + 1;
+//
+// Ranges for the three types of priorities
+//
 const PRI_TIMESHARE_RANGE = PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE + 1;
 const PRI_INTERACT_RANGE = (PRI_TIMESHARE_RANGE - SCHED_PRI_NRESV) / 2;
 const PRI_BATCH_RANGE = PRI_TIMESHARE_RANGE - PRI_INTERACT_RANGE;
-const SCHED_TICK_SECS = 10;
-const SCHED_TICK_SHIFT = 10;
 
-fn slpRunMax() i32 {
-    return ((hz * 5) << SCHED_TICK_SHIFT);
-}
-
-fn schedTickTarg() i32 {
-    return (hz * SCHED_TICK_SECS);
-}
-
-fn schedTickMax() i32 {
-    return schedTickTarg() + hz;
-}
-
-const SWT_NONE = 0; // Unspecified switch.
-const SWT_PREEMPT = 1; // Switching due to preemption.
-const SWT_OWEPREEMPT = 2; // Switching due to owepreempt.
-const SWT_TURNSTILE = 3; // Turnstile contention.
-const SWT_SLEEPQ = 4; // Sleepq wait.
-const SWT_SLEEPQTIMO = 5; // Sleepq timeout wait.
-const SWT_RELINQUISH = 6; // yield call.
-const SWT_NEEDRESCHED = 7; // NEEDRESCHED was set.
-const SWT_IDLE = 8; // Switching from the idle thread.
-const SWT_IWAIT = 9; // Waiting for interrupts.
-const SWT_SUSPEND = 10; // Thread suspended.
-const SWT_REMOTEPREEMPT = 11; // Remote processor preempted.
-const SWT_REMOTEWAKEIDLE = 12; // Remote processor preempted idle.
-const SWT_COUNT = 13; // Number of switch types.
-
-const SW_VOL = 0x0100; // Voluntary switch.
-const SW_INVOL = 0x0200; // Involuntary switch.
-const SW_PREEMPT = 0x0400; // The invol switch is a preemption
-
-const TSF_BOUND = 0x0001; // Thread can not migrate.
-const TSF_XFERABLE = 0x0002; // Thread was added as transferable.
-
-const TDF_NOLOAD = 0x00040000; // Ignore during load avg calculations.
-const TDF_BORROWING = 0x00000001; // Thread is borrowing pri from another.
-const TDF_IDLETD = 0x00000020; // This is a per-CPU idle thread.
-const TDF_SCHED0 = 0x01000000; // Reserved for scheduler private use
-const TDF_SCHED1 = 0x02000000; // Reserved for scheduler private use
-const TDF_SCHED2 = 0x04000000; // Reserved for scheduler private use
-const TDF_PICKCPU = TDF_SCHED0; // Thread should pick new CPU.
-const TDF_SLICEEND = TDF_SCHED2; // Thread time slice is over.
-
+//
+// Priority constants/limits
+//
 const PRI_MIN_INTERACT = PRI_MIN_TIMESHARE;
 const PRI_MAX_INTERACT = PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE - 1;
 const PRI_MIN_BATCH = PRI_MIN_TIMESHARE + PRI_INTERACT_RANGE;
@@ -83,27 +65,126 @@ const PRI_MAX_BATCH = PRI_MAX_TIMESHARE;
 const PRI_MIN_KERN = 48;
 const PRI_MIN_REALTIME = 16;
 const PRI_MAX_ITHD = PRI_MIN_REALTIME - 1;
+const PRI_MIN_TIMESHARE = 88;
+const PRI_MAX_TIMESHARE = PRI_MIN_IDLE - 1;
+const PRI_MIN_IDLE = 224;
+const PRI_MAX = 255;
+const PRI_MAX_IDLE = PRI_MAX;
 
-const SRQ_BORING = 0x0000; // No special circumstances.
-const SRQ_YIELDING = 0x0001; // We are yielding (from mi_switch).
-const SRQ_OURSELF = 0x0002; // It is ourself (from mi_switch).
-const SRQ_INTR = 0x0004; // It is probably urgent.
-const SRQ_PREEMPTED = 0x0008; // has been preempted.. be kind
-const SRQ_BORROWING = 0x0010; // Priority updated due to prio_lend
-const SRQ_HOLD = 0x0020; // Return holding original td lock
-const SRQ_HOLDTD = 0x0040; // Return holding td lock
+//
+// Misc constants
+//
+pub const TIMER_VECTOR = 0x20;
+const MAX_CACHE_LEVELS = 2;
+const NOCPU = -1; // For when a thread isn't on a CPU.
+const PRIO_MIN = -20;
+const PRIO_MAX = 20;
 
-const PRI_ITHD = 1; // Interrupt thread
-const PRI_REALTIME = 2; // Real time thread
-const PRI_TIMESHARE = 3; // Time share thread
-const PRI_IDLE = 4; // Idle thread
+//
+// Priority classes
+//
+const PRI_ITHD = 1;      // Interrupt thread.
+const PRI_REALTIME = 2;  // Real time process.
+const PRI_TIMESHARE = 3; // Time sharing process.
+const PRI_IDLE = 4;      // Idle process.
 
-const SCHED_SLICE_DEFAULT_DIVISOR = 10; // ~94 ms, 12 stathz ticks.
-const SCHED_SLICE_MIN_DIVISOR = 6;
+//
+// Sched Priority limits
+//
+const SCHED_PRI_NRESV = PRIO_MAX - PRIO_MIN;
+const SCHED_PRI_NHALF = SCHED_PRI_NRESV / 2;
+const SCHED_PRI_MIN = PRI_MIN_BATCH + SCHED_PRI_NHALF;
+const SCHED_PRI_MAX = PRI_MAX_BATCH - SCHED_PRI_NHALF;
+const SCHED_PRI_RANGE = SCHED_PRI_MAX - SCHED_PRI_MIN + 1;
+
+//
+// Sched Interact limits
+//
 const SCHED_INTERACT_MAX = 100;
 const SCHED_INTERACT_HALF = SCHED_INTERACT_MAX / 2;
 const SCHED_INTERACT_THRESH = 30;
 const SCHED_INTERACT = SCHED_INTERACT_THRESH;
+
+//
+// These parameters determine the slice behavior for batch work.
+//
+const SCHED_SLICE_DEFAULT_DIVISOR = 10; // ~94 ms, 12 stathz ticks.
+const SCHED_SLICE_MIN_DIVISOR = 6;      // DEFAULT/MIN = ~16 ms.
+const SCHED_TICK_SECS = 10;
+const SCHED_TICK_SHIFT = 10;
+
+//
+// Types for sched.miSwitch()
+//
+const SWT_NONE = 0;            // Unspecified switch.
+const SWT_PREEMPT = 1;         // Switching due to preemption.
+const SWT_OWEPREEMPT = 2;      // Switching due to owepreempt.
+const SWT_TURNSTILE = 3;       // Turnstile contention.
+const SWT_SLEEPQ = 4;          // Sleepq wait.
+const SWT_SLEEPQTIMO = 5;      // Sleepq timeout wait.
+const SWT_RELINQUISH = 6;      // yield call.
+const SWT_NEEDRESCHED = 7;     // NEEDRESCHED was set.
+const SWT_IDLE = 8;            // Switching from the idle thread.
+const SWT_IWAIT = 9;           // Waiting for interrupts.
+const SWT_SUSPEND = 10;        // Thread suspended.
+const SWT_REMOTEPREEMPT = 11;  // Remote processor preempted.
+const SWT_REMOTEWAKEIDLE = 12; // Remote processor preempted idle.
+const SWT_COUNT = 13;          // Number of switch types.
+
+// Flags for sched.miSwitch()
+const SW_VOL = 0x0100;         // Voluntary switch.
+const SW_INVOL = 0x0200;       // Involuntary switch.
+const SW_PREEMPT = 0x0400;     // The invol switch is a preemption
+
+//
+// Flags kept in 'Thread.flags'
+// To change these you MUST have the scheduler lock.
+//
+const TSF_BOUND = 0x0001;         // Thread can not migrate.
+const TSF_XFERABLE = 0x0002;      // Thread was added as transferable.
+
+const TDF_NOLOAD = 0x00040000;    // Ignore during load avg calculations.
+const TDF_BORROWING = 0x00000001; // Thread is borrowing pri from another.
+const TDF_IDLETD = 0x00000020;    // This is a per-CPU idle thread.
+const TDF_SCHED0 = 0x01000000;    // (used) Reserved for scheduler private use
+const TDF_SCHED1 = 0x02000000;    // Reserved for scheduler private use
+const TDF_SCHED2 = 0x04000000;    // (used) Reserved for scheduler private use
+const TDF_SCHED3 = 0x08000000;    // Reserved for scheduler private use
+const TDF_PICKCPU = TDF_SCHED0;   // Thread should pick new CPU.
+const TDF_SLICEEND = TDF_SCHED2;  // Thread time slice is over.
+
+//
+// Reasons that the current thread can not be run yet.
+// More than one may apply.
+//
+const TDI_SUSPENDED = 0x0001; // On suspension queue.
+const TDI_SLEEPING = 0x0002;  // Actually asleep! (tricky).
+const TDI_SWAPPED = 0x0004;   // Stack not in mem.  Bad juju if run.
+const TDI_LOCK = 0x0008;      // Stopped on a lock.
+const TDI_IWAIT = 0x0010;     // Awaiting interrupt.
+
+// sched.addThread() arguments
+const SRQ_BORING = 0x0000;    // No special circumstances.
+const SRQ_YIELDING = 0x0001;  // We are yielding (from miSwitch).
+const SRQ_OURSELF = 0x0002;   // It is ourself (from miSwitch).
+const SRQ_INTR = 0x0004;      // It is probably urgent.
+const SRQ_PREEMPTED = 0x0008; // has been preempted.. be kind
+const SRQ_BORROWING = 0x0010; // Priority updated due to prio_lend
+const SRQ_HOLD = 0x0020;      // Return holding original td lock
+const SRQ_HOLDTD = 0x0040;    // Return holding td lock
+
+//
+// State of a given thread
+//
+// zig fmt: on
+//
+pub const TdState = enum(u32) {
+    inactive,
+    inhibited,
+    can_run,
+    runq,
+    running,
+};
 
 var sched_slice: i32 = 10;
 var sched_slice_min: i32 = 1;
@@ -114,14 +195,6 @@ var blocked_lock: smp.SpinLock = .{};
 var hz: i32 = 127;
 var stathz: i32 = 127;
 var affinity: i32 = 0;
-
-pub const TdState = enum {
-    inactive,
-    inhibited,
-    can_run,
-    runq,
-    running,
-};
 
 pub const SchedInfo = struct {
     cur_thrd: ?*Thread = null,
@@ -134,41 +207,44 @@ pub const SchedInfo = struct {
 
 pub const Thread = struct {
     link: std.TailQueue(void).Node = undefined,
-    mtx: smp.SpinLock = .{},
+    mtx: *smp.SpinLock = undefined,
+    runq: *RunQueue = undefined,
 
-    ts_flags: i16, // TSF_* flags. */
-    cpu: i32, // CPU that we have affinity for. */
-    rltick: i32, // Real last tick, for affinity. */
-    slice: i32, // Ticks of slice remaining. */
-    slptime: u32, // Number of ticks we vol. slept */
-    runtime: u16, // Number of ticks we were running */
-    ltick: i32, // Last tick that we were running on */
-    ftick: i32, // First tick that we were running on */
-    ticks: i32, // Tick count */
+    // zig fmt: off
+    ts_flags: i16,     // TSF_* flags.
+    cpu: i32,          // CPU that we have affinity for.
+    rltick: i32,       // Real last tick, for affinity.
+    slice: i32,        // Ticks of slice remaining.
+    slptime: u32,      // Number of ticks we vol. slept
+    runtime: u32,      // Number of ticks we were running
+    ltick: i32,        // Last tick that we were running on
+    ftick: i32,        // First tick that we were running on
+    ticks: i32,        // Tick count
 
-    incruntime: i32, // Cpu ticks to transfer to proc. */
-    pri_class: i32, // Scheduling class. */
-    base_ithread_pri: i32,
-    base_pri: i32, // Thread base kernel priority. */
-    slptick: i32, // Time at sleep. */
-    critnest: i32, // Critical section nest level. */
-    swvoltick: i32, // Time at last SW_VOL switch. */
-    swinvoltick: i32, // Time at last SW_INVOL switch. */
-    inhibitors: u32, // Why can not run. */
-    lastcpu: i32, // Last cpu we were on. */
-    oncpu: i32, // Which cpu we are on. */
-    priority: u8, // Thread active priority. */
-    spinlock_count: i32,
+    incruntime: i32,   // Cpu ticks to transfer to proc.
+    pri_class: i32,    // Scheduling class.
+    base_pri: i32,     // Thread base kernel priority.
+    slptick: i32,      // Time at sleep.
+    critnest: i32,     // Critical section nest level.
+    swvoltick: i32,    // Time at last SW_VOL switch.
+    swinvoltick: i32,  // Time at last SW_INVOL switch.
+    inhibitors: u32,   // Why can not run.
+    lastcpu: i32,      // Last cpu we were on.
+    oncpu: i32,        // Which cpu we are on.
+    priority: u8,      // Thread active priority.
+    rqindex: i32,      // Run queue index.
+    user_pri: i32,     // User pri from estcpu and nice.
+    owepreempt: i32,   // Preempt on last critical_exit
     flags: u32,
-    rqindex: i32, // Run queue index. */
-    state: u32,
-    user_pri: i32, // User pri from estcpu and nice. */
+    state: TdState,
+
     base_user_pri: i32,
     lend_user_pri: i32,
-
-    owepreempt: i32, //  Preempt on last critical_exit */
+    base_ithread_pri: i32,
+    spinlock_count: i32,
     spinlock_status: bool,
     sched_ast: i32,
+    // zig fmt: on
 
     pub fn block(self: *Thread) void {
         var mtx = self.mtx;
@@ -181,22 +257,82 @@ pub const Thread = struct {
         @atomicStore(usize, @ptrCast(*usize, &self.mtx), @ptrToInt(new_lock), .Release);
     }
 
-    pub fn getAffinity(self: *Thread, t: i32) i32 {
-        return (self.rltick > ticks - (t * affinity));
+    pub fn assertBlocked(self: *Thread) void {
+        if (self.mtx != &blocked_lock) {
+            std.debug.assert(self.mtx.isLocked());
+        }
     }
 
     pub fn lock(self: *Thread) void {
-        enterSchedLock();
+        enterSpinLock();
         self.mtx.acq();
     }
 
     pub fn unlock(self: *Thread) void {
         self.mtx.rel();
-        exitSchedLock();
+        exitSpinLock();
     }
 
     pub fn isIdleThread(self: *Thread) bool {
         return (self.flags & TDF_IDLETD != 0);
+    }
+
+    pub fn getAffinity(self: *Thread, t: i32) i32 {
+        return (self.rltick > ticks - (t * affinity));
+    }
+
+    pub fn getSlice(self: *Thread, queue: *ThreadQueue) i32 {
+        if (self.pri_class == PRI_ITHD)
+            return sched_slice;
+
+        return queue.slice();
+    }
+
+    pub fn getPriTicks(self: *Thread) i32 {
+        var sched_tick_hz = self.ticks >> SCHED_TICK_SHIFT;
+        var sched_tick_total = std.math.max(self.ltick - self.ftick, hz);
+
+        return @divTrunc(
+            @divTrunc(sched_tick_hz, sched_tick_total + SCHED_PRI_RANGE - 1),
+            SCHED_PRI_RANGE,
+        );
+    }
+
+    pub fn computePrio(self: *Thread) void {
+        var pri: u32 = 0;
+        var score: u32 = 0;
+
+        if (self.pri_class != PRI_TIMESHARE)
+            return;
+
+        //
+        // If the score is interactive we place the thread in the realtime
+        // queue with a priority that is less than kernel and interrupt
+        // priorities.  These threads are not subject to nice restrictions.
+        //
+        // Scores greater than this are placed on the normal timeshare queue
+        // where the priority is partially decided by the most recent cpu
+        // utilization and the rest is decided by nice value.
+        //
+        // The nice value of the process has a linear effect on the calculated
+        // score.  Negative nice values make it easier for a thread to be
+        // considered interactive.
+        //
+        score = @intCast(u32, std.math.max(0, interactScore(self)));
+        if (score < SCHED_INTERACT_THRESH) {
+            pri = PRI_MIN_INTERACT;
+            pri += (PRI_MAX_INTERACT - PRI_MIN_INTERACT + 1) * score / SCHED_INTERACT_THRESH;
+
+            std.debug.assert(pri >= PRI_MIN_INTERACT and pri <= PRI_MAX_INTERACT);
+        } else {
+            pri = SCHED_PRI_MIN;
+            if (self.ticks != 0)
+                pri += std.math.min(@intCast(u32, self.getPriTicks()), SCHED_PRI_RANGE - 1);
+
+            std.debug.assert(pri >= PRI_MIN_BATCH and pri <= PRI_MAX_BATCH);
+        }
+
+        userPrio(self, @truncate(u8, pri));
     }
 };
 
@@ -204,15 +340,15 @@ pub const RunQueue = struct {
     bits: [RQ_PRIO_COUNT / 16]u16 = std.mem.zeroes([RQ_PRIO_COUNT / 16]u16),
     queues: [RQ_PRIO_COUNT]std.TailQueue(void) = std.mem.zeroes([RQ_PRIO_COUNT]std.TailQueue(void)),
 
-    inline fn setbit(self: *RunQueue, index: i32) void {
+    inline fn setbit(self: *RunQueue, index: u32) void {
         self.bits[index / 16] |= (1 << (index % 16));
     }
 
-    inline fn clrbit(self: *RunQueue, index: i32) void {
+    inline fn clrbit(self: *RunQueue, index: u32) void {
         self.bits[index / 16] &= ~@as(u16, 1 << (index % 16));
     }
 
-    fn findbit(self: *RunQueue) ?i32 {
+    fn findbit(self: *RunQueue) ?u32 {
         var i: usize = 0;
 
         while (i < RQ_PRIO_COUNT / 16) : (i += 1) {
@@ -225,7 +361,7 @@ pub const RunQueue = struct {
         return null;
     }
 
-    fn findbitFrom(self: *RunQueue, pri: u8) ?i32 {
+    fn findbitFrom(self: *RunQueue, pri: u8) ?u32 {
         // TODO(cleanbaja): find a way to use ffs for this
         var i: usize = 0;
 
@@ -287,7 +423,7 @@ pub const RunQueue = struct {
     }
 
     pub fn chooseFrom(self: *RunQueue, idx: u8) ?*Thread {
-        var pri: ?i32 = self.findbitFrom(idx);
+        var pri: ?u32 = self.findbitFrom(idx);
 
         while (pri) |p| : (pri = self.findbitFrom(idx)) {
             var thrd = self.queues[p].first;
@@ -299,16 +435,6 @@ pub const RunQueue = struct {
         return null;
     }
 };
-
-fn ffs(x: anytype) std.math.Log2IntCeil(@TypeOf(x)) {
-    if (x == 0) return 0;
-    return @ctz(x) + 1;
-}
-
-fn getTicks() u64 {
-    // TODO(cleanbaja): tick subsystem
-    return 0;
-}
 
 pub const ThreadQueue = struct {
     mtx: smp.SpinLock = .{},
@@ -328,10 +454,11 @@ pub const ThreadQueue = struct {
     cpu_idle: i32 = 0,
 
     pub fn addRunq(self: *ThreadQueue, thrd: *Thread, flags: i32) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
+        thrd.assertBlocked();
 
         var prio = thrd.priority;
-        thrd.status = TdState.runq;
+        thrd.state = TdState.runq;
 
         if (prio < PRI_MIN_BATCH) {
             thrd.runq = &self.realtime;
@@ -342,7 +469,7 @@ pub const ThreadQueue = struct {
 
             if (flags & (SRQ_BORROWING | SRQ_PREEMPTED) == 0) {
                 prio = RQ_PRIO_COUNT * (prio - PRI_MIN_BATCH) / PRI_BATCH_RANGE;
-                prio = (prio + self.idt) % RQ_PRIO_COUNT;
+                prio = (prio + self.idx) % RQ_PRIO_COUNT;
 
                 // this shortens the queue by one, so we can
                 // have a one slot difference while waiting for
@@ -361,7 +488,8 @@ pub const ThreadQueue = struct {
     }
 
     pub fn remRunq(self: *ThreadQueue, thrd: *Thread) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
+        thrd.assertBlocked();
 
         if (thrd.runq == null) {
             sink.info("remRunq: thread at 0x{X} has a null runq!", .{@ptrToInt(thrd)});
@@ -380,7 +508,8 @@ pub const ThreadQueue = struct {
     }
 
     pub fn addLoad(self: *ThreadQueue, thrd: *Thread) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
+        thrd.assertBlocked();
         self.load += 1;
 
         if (thrd.flags & TDF_NOLOAD == 0)
@@ -388,8 +517,9 @@ pub const ThreadQueue = struct {
     }
 
     pub fn remLoad(self: *ThreadQueue, thrd: *Thread) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
         std.debug.assert(self.load != 0);
+        thrd.assertBlocked();
         self.load -= 1;
 
         if (thrd.flags & TDF_NOLOAD == 0)
@@ -406,7 +536,7 @@ pub const ThreadQueue = struct {
     }
 
     pub fn setLowPri(self: *ThreadQueue, ctd: ?*Thread) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
         var td: ?*Thread = undefined;
         var cur = ctd;
 
@@ -422,7 +552,7 @@ pub const ThreadQueue = struct {
     }
 
     pub fn notify(self: *ThreadQueue, lowpri: i32) void {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
         std.debug.assert(self.lowpri <= lowpri);
 
         //
@@ -450,7 +580,7 @@ pub const ThreadQueue = struct {
     }
 
     pub fn choose(self: *ThreadQueue) ?*Thread {
-        std.debug.assert(self.lock.isLocked());
+        std.debug.assert(self.mtx.isLocked());
         var thrd = self.realtime.choose();
 
         if (thrd) |t|
@@ -472,11 +602,13 @@ pub const ThreadQueue = struct {
     }
 
     pub fn add(self: *ThreadQueue, thrd: *Thread, flags: i32) i32 {
-        std.debug.assert(self.lock.isLocked());
-        std.debug.assert(thrd.inhibitors == 0);
-        std.debug.assert(thrd.canRun() or thrd.isRunning());
-
+        std.debug.assert(self.mtx.isLocked());
         var lowpri = self.lowpri;
+        thrd.assertBlocked();
+
+        std.debug.assert(thrd.inhibitors == 0);
+        std.debug.assert(thrd.state == .can_run or thrd.state == .running);
+
         if (thrd.priority < lowpri)
             self.lowpri = thrd.priority;
 
@@ -487,31 +619,95 @@ pub const ThreadQueue = struct {
     }
 
     pub fn lock(self: *ThreadQueue) void {
-        enterSchedLock();
+        enterSpinLock();
         self.lock.acq();
     }
 };
 
+//
+// Per-Cpu scheduler information helpers
+//
 pub inline fn getSchedInfo() *SchedInfo {
     return &smp.getCoreInfo().sched_info;
 }
-
-pub inline fn getInfoOfCpu(cpu: u32) *SchedInfo {
-    return &smp.getInfo(cpu).sched_info;
+pub inline fn getThreadQueueOf(cpu: i32) *ThreadQueue {
+    return &smp.getCoreInfoOf(cpu).sched_info.tdq;
+}
+pub inline fn getInfoOfCpu(cpu: i32) *SchedInfo {
+    return &smp.getCoreInfoOf(cpu).sched_info;
 }
 
-inline fn sliceThread(td: *Thread, queue: *ThreadQueue) i32 {
-    if (td.pri_class == PRI_ITHD)
-        return sched_slice;
-
-    return queue.slice();
+//
+// Spinlocks/Critical sections
+//
+// TODO: move this stuff to smp.zig
+//
+fn enterCritical() void {
+    getSchedInfo().cur_thrd.?.critnest += 1;
+    asm volatile ("" ::: "memory");
 }
 
-pub fn createKernelStack() ?u64 {
-    if (pmm.allocPages(4)) |page| {
-        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
+fn exitCritical() void {
+    var td = getSchedInfo().cur_thrd.?;
+    std.debug.assert(td.critnest != 0);
+
+    asm volatile ("" ::: "memory");
+    td.critnest -= 1;
+    asm volatile ("" ::: "memory");
+
+    if (td.owepreempt != 0) {
+        //
+        // If critnest is 0, it is possible that we are going to get
+        // preempted again before reaching the code below. This happens
+        // rarely and is harmless. However, this means td_owepreempt may
+        // now be unset.
+        //
+        if (td.critnest != 0)
+            return;
+
+        //
+        // Microoptimization: we committed to switch,
+        // disable preemption in interrupt handlers
+        // while spinning for the thread lock.
+        //
+        td.critnest = 1;
+        td.lock();
+        td.critnest -= 1;
+        var flags: i32 = SW_INVOL | SW_PREEMPT;
+
+        if (td.isIdleThread()) {
+            flags |= SWT_IDLE;
+        } else {
+            flags |= SWT_OWEPREEMPT;
+        }
+
+        miSwitch(flags);
+    }
+}
+
+inline fn enterSpinLock() void {
+    var td = getSchedInfo().cur_thrd.?;
+
+    if (td.spinlock_count == 0) {
+        td.spinlock_status = arch.intrEnabled();
+        if (td.spinlock_status)
+            arch.setIntrMode(false);
+
+        td.spinlock_count = 1;
+        enterCritical();
     } else {
-        return null;
+        td.spinlock_count += 1;
+    }
+}
+
+inline fn exitSpinLock() void {
+    var td = getSchedInfo().cur_thrd.?;
+
+    td.spinlock_count -= 1;
+    if (td.spinlock_count == 0) {
+        exitCritical();
+        if (td.spinlock_status)
+            arch.setIntrMode(true);
     }
 }
 
@@ -572,54 +768,27 @@ pub fn hardclock(cnt: i32) void {
     }
 }
 
-inline fn enterCritical() void {
-    getSchedInfo().cur_thrd.?.critnest += 1;
-    @fence(.SeqCst);
-}
-
-inline fn exitCritical() void {
+fn statclock(cnt: i32) void {
     var td = getSchedInfo().cur_thrd.?;
-    std.debug.assert(td.critnest != 0);
+    td.lock();
 
-    @fence(.SeqCst);
-    td.critnest -= 1;
-    @fence(.SeqCst);
+    //
+    // Compute the amount of time during which the current
+    // thread was running, and add that to its total so far.
+    //
+    var new_switchtime = getTicks();
+    var runtime = new_switchtime - getSchedInfo().switchtime;
+    td.runtime += @truncate(u16, runtime);
+    td.incruntime += @intCast(i32, runtime);
+    getSchedInfo().switchtime = new_switchtime;
 
-    if (td.owepreempt != 0) {
-        if (td.critnest != 0)
-            return;
-    }
-}
-
-inline fn enterSchedLock() void {
-    var td = getSchedInfo().cur_thrd.?;
-
-    if (td.spinlock_count == 0) {
-        td.spinlock_status = arch.intrEnabled();
-        if (td.spinlock_status)
-            arch.setIntrMode(false);
-
-        td.spinlock_count = 1;
-        enterCritical();
-    } else {
-        td.spinlock_count += 1;
-    }
-}
-
-inline fn exitSchedLock() void {
-    var td = getSchedInfo().cur_thrd.?;
-
-    td.spinlock_count -= 1;
-    if (td.spinlock_count == 0) {
-        exitCritical();
-        if (td.spinlock_status)
-            arch.setIntrMode(true);
-    }
+    clock(td, cnt);
+    td.unlock();
 }
 
 pub fn setcpu(td: *Thread, cpu: i32, flags: i32) *ThreadQueue {
-    std.debug.assert(td.lock.isLocked());
-    var tdq = getInfoOfCpu(cpu);
+    std.debug.assert(td.mtx.isLocked());
+    var tdq = getThreadQueueOf(cpu);
     td.cpu = cpu;
 
     //
@@ -633,33 +802,31 @@ pub fn setcpu(td: *Thread, cpu: i32, flags: i32) *ThreadQueue {
     //
     // Otherwise, migrate the thread across
     //
-    enterSchedLock();
+    enterSpinLock();
     var mtx = td.block();
     if ((flags & SRQ_HOLD) == 0)
         mtx.rel();
 
     tdq.lock();
     td.unblock(&tdq.lock);
-    exitSchedLock();
+    exitSpinLock();
     return tdq;
 }
 
-fn interactScore(td: *Thread) i32 {
-    var div: i32 = 0;
+fn interactScore(td: *Thread) u32 {
+    var div: u32 = 0;
 
     //
     // The score is only needed if this is likely to be an interactive
     // task.  Don't go through the expense of computing it if there's
     // no chance.
     //
-    if (SCHED_INTERACT_THRESH <= SCHED_INTERACT_HALF and
-        td.runtime >= td.slptime)
+    if (SCHED_INTERACT_THRESH <= SCHED_INTERACT_HALF and td.runtime >= td.slptime)
         return SCHED_INTERACT_HALF;
 
     if (td.runtime > td.slptime) {
         div = std.math.max(1, td.runtime / SCHED_INTERACT_HALF);
-        return SCHED_INTERACT_HALF +
-            (SCHED_INTERACT_HALF - (td.slptime / div));
+        return SCHED_INTERACT_HALF + (SCHED_INTERACT_HALF - (td.slptime / div));
     }
 
     if (td.slptime > td.runtime) {
@@ -668,7 +835,7 @@ fn interactScore(td: *Thread) i32 {
     }
 
     // runtime == slptime
-    if (td.runtime)
+    if (td.runtime != 0)
         return SCHED_INTERACT_HALF;
 
     //
@@ -694,11 +861,12 @@ fn pickcpu(td: *Thread, flags: i32) i32 {
     if (td.priority <= PRI_MAX_ITHD) {
         tdq = &getSchedInfo().tdq;
         if (tdq.lowpri >= PRI_MIN_IDLE) {
-            return self;
+            return @intCast(i32, self);
         }
         td.cpu = self;
     } else {
-        tdq = getInfoOfCpu(td.cpu);
+        tdq = getThreadQueueOf(td.cpu);
+
         //
         // If the thread can run on the last cpu and the affinity has not
         // expired and it is idle, run it there.
@@ -713,7 +881,7 @@ fn pickcpu(td: *Thread, flags: i32) i32 {
     var i: usize = 0;
     cpu = 0;
     while (i < smp.getCpuCount()) : (i += 1) {
-        tdq = &getInfoOfCpu(cpu).tdq;
+        tdq = getThreadQueueOf(cpu);
         var load = tdq.load();
         if (load < currload) {
             currload = load;
@@ -724,7 +892,7 @@ fn pickcpu(td: *Thread, flags: i32) i32 {
     //
     // Compare the lowest loaded cpu to current cpu.
     //
-    tdq = &getInfoOfCpu(cpu).tdq;
+    tdq = getThreadQueueOf(cpu);
     if (getSchedInfo().tdq.lowpri > td.priority and
         @atomicLoad(u8, &tdq.lowpri, .SeqCst) < PRI_MIN_IDLE and
         getSchedInfo().tdq.load() <= tdq.load() + 1)
@@ -740,59 +908,24 @@ fn userPrio(td: *Thread, prio: u8) void {
     td.user_pri = prio;
 }
 
-fn findPriority(td: *Thread) void {
-    var pri: u32 = 0;
-    var score: u32 = 0;
-
-    if (td.pri_class != PRI_TIMESHARE)
-        return;
-    //
-    // If the score is interactive we place the thread in the realtime
-    // queue with a priority that is less than kernel and interrupt
-    // priorities.  These threads are not subject to nice restrictions.
-    //
-    // Scores greater than this are placed on the normal timeshare queue
-    // where the priority is partially decided by the most recent cpu
-    // utilization and the rest is decided by nice value.
-    //
-    // The nice value of the process has a linear effect on the calculated
-    // score.  Negative nice values make it easier for a thread to be
-    // considered interactive.
-    //
-    score = std.math.max(0, interactScore(td));
-    if (score < SCHED_INTERACT_THRESH) {
-        pri = PRI_MIN_INTERACT;
-        pri += (PRI_MAX_INTERACT - PRI_MIN_INTERACT + 1) * score /
-            SCHED_INTERACT_THRESH;
-        std.debug.assert(pri >= PRI_MIN_INTERACT and pri <= PRI_MAX_INTERACT);
-    } else {
-        pri = SCHED_PRI_MIN;
-        if (td.ticks)
-            pri += std.math.min(td.getPriTicks(), SCHED_PRI_RANGE - 1);
-
-        std.debug.assert(pri >= PRI_MIN_BATCH and pri <= PRI_MAX_BATCH);
-    }
-
-    userPrio(td, pri);
-}
-
 fn updateInteract(td: *Thread) void {
-    var sum: u32 = 0;
+    var sum = td.runtime + td.slptime;
+    var slp_run_max = ((hz * 5) << SCHED_TICK_SHIFT);
 
-    sum = td.runtime + td.slptime;
-    if (sum < slpRunMax())
+    if (sum < slp_run_max)
         return;
+
     //
     // This only happens from two places:
     // 1) We have added an unusual amount of run time from fork_exit.
     // 2) We have added an unusual amount of sleep time from sched_sleep().
     //
-    if (sum > slpRunMax() * 2) {
+    if (sum > slp_run_max * 2) {
         if (td.runtime > td.slptime) {
-            td.runtime = @intCast(u16, slpRunMax());
+            td.runtime = @intCast(u32, slp_run_max);
             td.slptime = 1;
         } else {
-            td.slptime = slpRunMax();
+            td.slptime = @intCast(u32, slp_run_max);
             td.runtime = 1;
         }
         return;
@@ -802,7 +935,7 @@ fn updateInteract(td: *Thread) void {
     // will not bring us back into range.  Dividing by two here forces
     // us into the range of [4/5 * SCHED_INTERACT_MAX, SCHED_INTERACT_MAX]
     //
-    if (sum > (slpRunMax() / 5) * 6) {
+    if (sum > @divTrunc(slp_run_max, 5) * 6) {
         td.runtime /= 2;
         td.slptime /= 2;
         return;
@@ -812,19 +945,21 @@ fn updateInteract(td: *Thread) void {
 }
 
 fn updatePctCpu(td: *Thread, run: i32) void {
+    var tick_targ = hz * SCHED_TICK_SECS;
+    var tick_max = tick_targ + hz;
     var t = ticks;
 
     //
     // The signed difference may be negative if the thread hasn't run for
     // over half of the ticks rollover period.
     //
-    if (@intCast(u32, (t - td.ltick)) >= schedTickTarg()) {
+    if (@intCast(u32, (t - td.ltick)) >= tick_targ) {
         td.ticks = 0;
-        td.ftick = t - schedTickTarg();
-    } else if (t - td.ftick >= schedTickMax()) {
+        td.ftick = t - tick_targ;
+    } else if (t - td.ftick >= tick_max) {
         td.ticks = @divTrunc(td.ticks, (td.ltick - td.ftick)) *
-            (td.ltick - (t - schedTickTarg()));
-        td.ftick = t - schedTickTarg();
+            (td.ltick - (t - tick_targ));
+        td.ftick = t - tick_targ;
     }
     if (run != 0)
         td.ticks += (t - td.ltick) << SCHED_TICK_SHIFT;
@@ -838,13 +973,14 @@ fn threadPriority(td: *Thread, prio: u8) void {
     std.debug.assert(td.mtx.isLocked());
     if (td.priority == prio)
         return;
+
     //
     // If the priority has been elevated due to priority
     // propagation, we may have to move ourselves to a new
     // queue.  This could be optimized to not re-add in some
     // cases.
     //
-    if (td.onRunq() and prio < td.priority) {
+    if (td.state == .runq and prio < td.priority) {
         removeThread(td);
         td.priority = prio;
         addThread(td, SRQ_BORROWING | SRQ_HOLDTD);
@@ -855,8 +991,8 @@ fn threadPriority(td: *Thread, prio: u8) void {
     // If the thread is currently running we may have to adjust the lowpri
     // information so other cpus are aware of our current priority.
     //
-    if (td.isRunning()) {
-        tdq = &getInfoOfCpu(td.cpu).tdq;
+    if (td.state == .running) {
+        tdq = getThreadQueueOf(td.cpu);
         oldpri = td.priority;
         td.priority = prio;
 
@@ -873,8 +1009,8 @@ fn threadPriority(td: *Thread, prio: u8) void {
 }
 
 fn setPreempt(pri: i32) void {
-    var ctd = getSchedInfo().cur_thrd;
-    std.debug.assert(ctd.lock.isLocked());
+    var ctd = getSchedInfo().cur_thrd orelse @panic("setPreempt() called with no pcpu thread");
+    std.debug.assert(ctd.mtx.isLocked());
 
     var cpri = ctd.priority;
     if (pri < cpri)
@@ -888,7 +1024,7 @@ fn setPreempt(pri: i32) void {
 }
 
 fn addThread(td: *Thread, flags: i32) void {
-    std.debug.assert(td.lock.isLocked());
+    std.debug.assert(td.mtx.isLocked());
 
     var tdq: *ThreadQueue = undefined;
     var lowpri: i32 = 0;
@@ -899,7 +1035,7 @@ fn addThread(td: *Thread, flags: i32) void {
     // run-queue.
     //
     if (td.pri_class == PRI_TIMESHARE)
-        findPriority(td);
+        td.computePrio();
 
     //
     // Pick the destination cpu and if it isn't ours transfer to the
@@ -911,20 +1047,20 @@ fn addThread(td: *Thread, flags: i32) void {
 
     if (cpu != smp.getCoreId()) {
         tdq.notify(lowpri);
-    } else if (!(flags & SRQ_YIELDING)) {
+    } else if (flags & SRQ_YIELDING == 0) {
         setPreempt(td.priority);
     }
 
-    if (!(flags & SRQ_HOLDTD))
+    if (flags & SRQ_HOLDTD == 0)
         td.unlock();
 }
 
 fn removeThread(td: *Thread) void {
-    var tdq = &getInfoOfCpu(td.cpu).tdq;
+    var tdq = getThreadQueueOf(td.cpu);
 
-    std.debug.assert(tdq.lock.isLocked());
-    std.debug.assert(@ptrToInt(td.lock) == @ptrToInt(&tdq.lock));
-    std.debug.assert(td.onRunq());
+    std.debug.assert(tdq.mtx.isLocked());
+    std.debug.assert(td.lock == &tdq.lock);
+    std.debug.assert(td.state == .runq);
 
     tdq.remRunq(td);
     tdq.remLoad(td);
@@ -956,7 +1092,7 @@ pub fn unlendPrio(td: *Thread, prio: u8) void {
     }
 }
 
-fn setPrio(td: *Thread, prio: u8) void {
+fn priority(td: *Thread, prio: u8) void {
     // First, update the base priority.
     td.base_pri = prio;
 
@@ -972,12 +1108,12 @@ fn setPrio(td: *Thread, prio: u8) void {
 }
 
 fn lendUserPrio(td: *Thread, prio: u8) void {
-    std.debug.assert(td.lock.isLocked());
+    std.debug.assert(td.mtx.isLocked());
     td.lend_user_pri = prio;
     td.user_pri = std.math.min(prio, td.base_user_pri);
 
     if (td.priority > td.user_pri) {
-        setPrio(td, td.user_pri);
+        priority(td, td.user_pri);
     } else if (td.priority != td.user_pri) {
         td.sched_ast = 1;
     }
@@ -1001,7 +1137,7 @@ fn switchMigrate(tdq: *ThreadQueue, td: *Thread, flags: i32) *smp.SpinLock {
     std.debug.assert((td.flags & TSF_BOUND) != 0);
 
     var lowpri: i32 = 0;
-    var tdn = &getInfoOfCpu(td.cpu).tdq;
+    var tdn = getThreadQueueOf(td.cpu);
     tdq.remLoad(td);
 
     //
@@ -1044,6 +1180,7 @@ fn choose() *Thread {
 
 fn swithd(td: *Thread, flags: i32) void {
     std.debug.assert(td.mtx.isLocked());
+
     var cpuid = smp.getCoreInfo();
     var tdq = &getSchedInfo().tdq;
     var srqflag: i32 = 0;
@@ -1071,12 +1208,13 @@ fn swithd(td: *Thread, flags: i32) void {
     // Always block the thread lock so we can drop the tdq lock early.
     //
     var mtx = td.block();
-    enterSchedLock();
+    enterSpinLock();
     if (td.isIdleThread()) {
-        std.debug.assert(@ptrToInt(mtx) == @ptrToInt(&tdq.mtx));
+        std.debug.assert(mtx == &tdq.mtx);
         td.state = .can_run;
-    } else if (td.isRunning()) {
-        std.debug.assert(@ptrToInt(mtx) == @ptrToInt(&tdq.mtx));
+    } else if (td.state == .running) {
+        std.debug.assert(mtx == &tdq.mtx);
+
         srqflag = SRQ_OURSELF | SRQ_YIELDING;
         if (preempted) {
             srqflag |= SRQ_PREEMPTED;
@@ -1085,6 +1223,7 @@ fn swithd(td: *Thread, flags: i32) void {
         if (pkcpu) {
             td.cpu = pickcpu(td, 0);
         }
+
         if (td.cpu == cpuid) {
             tdq.addRunq(td, srqflag);
         } else {
@@ -1092,7 +1231,7 @@ fn swithd(td: *Thread, flags: i32) void {
         }
     } else {
         // This thread must be going to sleep.
-        if (@ptrToInt(mtx) != @ptrToInt(&tdq.mtx)) {
+        if (mtx != &tdq.mtx) {
             mtx.rel();
             tdq.lock();
         }
@@ -1153,7 +1292,7 @@ fn sleep(td: *Thread, prio: i32) void {
     if (td.pri_class != PRI_TIMESHARE)
         return;
     if (td.priority > PRI_MIN_BATCH)
-        setPrio(td, PRI_MIN_BATCH);
+        priority(td, PRI_MIN_BATCH);
 }
 
 fn wakeup(td: *Thread, srqflags: i32) void {
@@ -1176,7 +1315,7 @@ fn wakeup(td: *Thread, srqflags: i32) void {
     // priority.
     //
     if (td.pri_class == PRI_ITHD and td.priority != td.base_ithread_pri)
-        setPrio(td, td.base_ithread_pri);
+        priority(td, td.base_ithread_pri);
 
     //
     // Reset the slice value since we slept and advanced the round-robin.
@@ -1246,7 +1385,7 @@ fn clock(td: *Thread, cnt: i32) void {
         //
         td.runtime += @intCast(u16, tickincr * cnt);
         updateInteract(td);
-        findPriority(td);
+        td.computePrio();
     }
 
     //
@@ -1254,7 +1393,7 @@ fn clock(td: *Thread, cnt: i32) void {
     // time slice (default is 100ms).
     //
     td.slice += cnt;
-    if (td.slice >= sliceThread(td, tdq)) {
+    if (td.slice >= td.getSlice(tdq)) {
         td.slice = 0;
 
         //
@@ -1264,7 +1403,7 @@ fn clock(td: *Thread, cnt: i32) void {
         if (td.pri_class == PRI_ITHD) {
             td.owepreempt = 1;
             if (td.base_pri + RQ_PPQ < PRI_MAX_ITHD) {
-                setPrio(td, @intCast(u8, td.base_pri + RQ_PPQ));
+                priority(td, @intCast(u8, td.base_pri + RQ_PPQ));
             }
         } else {
             td.sched_ast = 1;
@@ -1274,14 +1413,14 @@ fn clock(td: *Thread, cnt: i32) void {
 }
 
 fn miSwitch(flags: i32) void {
-    var td = getSchedInfo().cur_thread; // XXX
+    var td = getSchedInfo().cur_thrd orelse @panic("miSwitch() called with no pcpu thread"); // XXX
 
     std.debug.assert(td.mtx.isLocked());
-    std.debug.assert(!td.onRunq());
+    std.debug.assert(td.state != .runq);
     std.debug.assert(td.critnest == 1);
     std.debug.assert(flags & (SW_INVOL | SW_VOL) != 0);
 
-    if (flags & SW_VOL) {
+    if (flags & SW_VOL != 0) {
         td.swvoltick = ticks;
     } else {
         td.swinvoltick = ticks;
@@ -1293,32 +1432,37 @@ fn miSwitch(flags: i32) void {
     //
     var new_switchtime = getTicks();
     var runtime = new_switchtime - getSchedInfo().switchtime;
-    td.runtime += runtime;
-    td.incruntime += runtime;
+    td.runtime += @truncate(u32, runtime);
+    td.incruntime += @intCast(u64, runtime);
 
     getSchedInfo().switchtime = new_switchtime;
     getSchedInfo().switchticks = ticks;
     swithd(td, flags);
 }
 
-fn statclock(cnt: i32) void {
-    var td = getSchedInfo().cur_thrd.?;
-    td.lock();
-
-    //
-    // Compute the amount of time during which the current
-    // thread was running, and add that to its total so far.
-    //
-    var new_switchtime = getTicks();
-    var runtime = new_switchtime - getSchedInfo().switchtime;
-    td.runtime += @truncate(u16, runtime);
-    td.incruntime += @intCast(i32, runtime);
-    getSchedInfo().switchtime = new_switchtime;
-
-    clock(td, cnt);
-    td.unlock();
+//
+// Misc functions
+//
+fn ffs(x: anytype) std.math.Log2IntCeil(@TypeOf(x)) {
+    if (x == 0) return 0;
+    return @ctz(x) + 1;
+}
+fn getTicks() u64 {
+    // TODO(cleanbaja): tick subsystem
+    return 0;
 }
 
+pub fn createKernelStack() ?u64 {
+    if (pmm.allocPages(4)) |page| {
+        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
+    } else {
+        return null;
+    }
+}
+
+//
+// Initialization/Context switches callback
+//
 pub fn reschedule(frame: *trap.TrapFrame) callconv(.C) void {
     getSchedInfo().frame = @ptrToInt(frame);
     arch.ic.oneshot(TIMER_VECTOR, 10);
