@@ -1,9 +1,9 @@
 const limine = @import("limine");
 const target = @import("builtin").target;
 const atomic = @import("std").atomic;
-const sched = @import("root").sched;
 const arch = @import("root").arch;
 const vmm = @import("root").vmm;
+const pmm = @import("root").pmm;
 const std = @import("std");
 const smp = @import("root").smp;
 
@@ -83,7 +83,6 @@ pub const CoreInfo = struct {
     user_stack: u64 = 0,
     tss: arch.TSS = .{},
     is_bsp: bool = false,
-    sched_info: sched.SchedInfo = .{},
 };
 
 pub inline fn isBsp() bool {
@@ -152,13 +151,21 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
 
     // load the TSS
     getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{
-        .rsp0 = sched.createKernelStack().?,
+        .rsp0 = createKernelStack().?,
     });
     arch.loadTSS(&getCoreInfo().tss);
 
     // let BSP know we're done, then off we go!
     _ = booted_cores.fetchAdd(1, .Monotonic);
     while (true) {}
+}
+
+fn createKernelStack() ?u64 {
+    if (pmm.allocPages(4)) |page| {
+        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
+    } else {
+        return null;
+    }
 }
 
 pub fn init() !void {
@@ -173,7 +180,7 @@ pub fn init() !void {
 
             // load the TSS
             getCoreInfo().tss = zeroInit(arch.TSS, arch.TSS{});
-            getCoreInfo().tss.rsp0 = sched.createKernelStack().?;
+            getCoreInfo().tss.rsp0 = createKernelStack().?;
             arch.loadTSS(&getCoreInfo().tss);
 
             arch.ic.setup();

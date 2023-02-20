@@ -1,5 +1,4 @@
 const std = @import("std");
-const sched = @import("root").sched;
 const arch = @import("root").arch;
 
 const TrapStub = *const fn () callconv(.Naked) void;
@@ -84,11 +83,7 @@ pub fn load() void {
 
     if (!entries_generated) {
         for (genStubTable()) |stub, idx| {
-            if (idx == sched.TIMER_VECTOR) {
-                entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 1);
-            } else {
-                entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
-            }
+            entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
         }
 
         entries_generated = true;

@@ -9,7 +9,6 @@ pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
 pub const vfs = @import("vfs.zig");
-pub const sched = @import("sched.zig");
 
 var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
 pub export var terminal_request: limine.TerminalRequest = .{};
@@ -110,5 +109,4 @@ fn kernel_main() !void {
     try vmm.init();
     try acpi.init();
     try smp.init();
-    try sched.init();
 }
