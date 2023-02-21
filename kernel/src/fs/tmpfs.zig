@@ -22,8 +22,8 @@ fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs
     var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
     var len = length;
 
-    node.lock.acq();
-    defer node.lock.rel();
+    node.lock.lock();
+    defer node.lock.unlock();
 
     if ((offset + length) > inode.bytes) {
         if (offset > inode.bytes) {
@@ -40,8 +40,8 @@ fn tmpfs_read(node: *vfs.VfsNode, buffer: [*]u8, offset: u64, length: usize) vfs
 fn tmpfs_write(node: *vfs.VfsNode, buffer: [*]const u8, offset: u64, length: usize) vfs.VfsError!usize {
     var inode = @ptrCast(*align(1) TmpfsInode, node.inode);
 
-    node.lock.acq();
-    defer node.lock.rel();
+    node.lock.lock();
+    defer node.lock.unlock();
 
     if ((offset + length) > inode.bytes) {
         while ((offset + length) > inode.bytes) : (inode.bytes *= 2) {}

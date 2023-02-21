@@ -1,6 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
-const smp = @import("root").smp;
+const sync = @import("util/sync.zig");
 const vmm = @import("root").vmm;
 const sink = std.log.scoped(.pmm);
 const PAGE_SIZE = std.mem.page_size;
@@ -120,7 +120,7 @@ pub const PageAllocator = struct {
 pub export var memmap_request: limine.MemoryMapRequest = .{};
 pub var page_allocator = PageAllocator{};
 var global_bitmap: Bitmap = undefined;
-var pmm_lock = smp.SpinLock{};
+var pmm_lock = sync.SpinMutex{};
 
 fn getKindName(kind: anytype) []const u8 {
     return switch (kind) {
@@ -180,8 +180,8 @@ pub fn init() !void {
 }
 
 pub fn allocPages(count: usize) ?u64 {
-    pmm_lock.acq();
-    defer pmm_lock.rel();
+    pmm_lock.lock();
+    defer pmm_lock.unlock();
 
     return result: {
         if (global_bitmap.findFreeRange(count, 1)) |free_bit| {
@@ -194,8 +194,8 @@ pub fn allocPages(count: usize) ?u64 {
 }
 
 pub fn allocHugePages(count: usize) ?u64 {
-    pmm_lock.acq();
-    defer pmm_lock.rel();
+    pmm_lock.lock();
+    defer pmm_lock.unlock();
 
     return result: {
         if (global_bitmap.findFreeRange(count * 0x200, 0x200)) |free_bit| {
@@ -208,8 +208,8 @@ pub fn allocHugePages(count: usize) ?u64 {
 }
 
 pub fn freePages(ptr: usize, count: usize) void {
-    pmm_lock.acq();
-    defer pmm_lock.rel();
+    pmm_lock.lock();
+    defer pmm_lock.unlock();
 
     global_bitmap.clearRange(ptr / PAGE_SIZE, count);
 }

@@ -23,7 +23,7 @@ pub const IrqHandler = struct {
 
 pub const IrqPin = struct {
     handlers: std.ArrayList(IrqHandler) = undefined,
-    lock: smp.SpinLock = .{},
+    lock: sync.SpinMutex = .{},
     action: IrqAction = .nothing,
 
     priv_data: *anyopaque = undefined,
@@ -78,8 +78,8 @@ pub const IrqPin = struct {
             return;
         }
 
-        self.lock.acq();
-        defer self.lock.rel();
+        self.lock.lock();
+        defer self.lock.unlock();
 
         self.lockFreeTrigger(frame, true);
     }

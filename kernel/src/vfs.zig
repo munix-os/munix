@@ -1,6 +1,6 @@
 const std = @import("std");
 const limine = @import("limine");
-const smp = @import("root").smp;
+const sync = @import("util/sync.zig");
 const zeroes = std.mem.zeroes;
 const sink = std.log.scoped(.vfs);
 const allocator = @import("root").allocator;
@@ -42,7 +42,7 @@ pub const VfsNode = struct {
     fs: *const Filesystem = undefined,
     mountpoint: ?*VfsNode = null,
     inode: ?*anyopaque = null,
-    lock: smp.SpinLock = .{},
+    lock: sync.SpinMutex = .{},
 
     pub fn isDir(self: *VfsNode) bool {
         if ((self.stat.st_mode & libc.S_IFDIR) != 0) {
@@ -69,8 +69,8 @@ pub const VfsNode = struct {
             return self.parent;
         }
 
-        self.lock.acq();
-        defer self.lock.rel();
+        self.lock.lock();
+        defer self.lock.unlock();
 
         for (self.children.items) |file| {
             if (std.mem.eql(u8, file.name, path)) {
@@ -200,8 +200,8 @@ pub fn createNode(
     }
 
     if (add) {
-        parent.lock.acq();
-        defer parent.lock.rel();
+        parent.lock.lock();
+        defer parent.lock.unlock();
 
         try parent.children.append(new_node);
     }

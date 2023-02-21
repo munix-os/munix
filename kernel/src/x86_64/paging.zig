@@ -1,10 +1,10 @@
 const vmm = @import("root").vmm;
 const pmm = @import("root").pmm;
-const smp = @import("root").smp;
+const sync = @import("../util/sync.zig");
 
 pub const PageMap = struct {
     root: u64 = undefined,
-    lock: smp.SpinLock = .{},
+    lock: sync.SpinMutex = .{},
 
     pub fn load(self: *PageMap) void {
         loadSpace(self.root);
@@ -17,8 +17,8 @@ pub const PageMap = struct {
     pub fn mapPage(self: *PageMap, flags: vmm.MapFlags, virt: u64, phys: u64, huge: bool) void {
         var root: [*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
 
-        self.lock.acq();
-        defer self.lock.rel();
+        self.lock.lock();
+        defer self.lock.unlock();
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{
@@ -43,8 +43,8 @@ pub const PageMap = struct {
     pub fn unmapPage(self: *PageMap, virt: u64) void {
         var root: ?[*]u64 = @intToPtr([*]u64, vmm.toHigherHalf(self.root));
 
-        self.lock.acq();
-        defer self.lock.rel();
+        self.lock.lock();
+        defer self.lock.unlock();
 
         // zig fmt: off
         var indices: [4]u64 = [_]u64{

@@ -5,12 +5,13 @@ const logger = std.log.scoped(.main);
 // modules
 pub const arch = @import("x86_64/arch.zig");
 pub const acpi = @import("acpi.zig");
+pub const sync = @import("util/sync.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
 pub const vfs = @import("vfs.zig");
 
-var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = smp.SpinLock }){};
+var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = sync.SpinMutex }){};
 pub export var terminal_request: limine.TerminalRequest = .{};
 
 pub inline fn allocator() std.mem.Allocator {
@@ -31,7 +32,7 @@ pub const os = .{
 };
 
 var log_buffer: [16 * 4096]u8 = undefined;
-var log_lock = smp.SpinLock{};
+var log_lock = sync.SpinMutex{};
 var limine_terminal_cr3: u64 = 0;
 
 pub fn log(
@@ -40,8 +41,8 @@ pub fn log(
     comptime fmt: []const u8,
     args: anytype,
 ) void {
-    log_lock.acq();
-    defer log_lock.rel();
+    log_lock.lock();
+    defer log_lock.unlock();
 
     var buffer = std.io.fixedBufferStream(&log_buffer);
     var writer = buffer.writer();

@@ -1,5 +1,5 @@
 const std = @import("std");
-const smp = @import("root").smp;
+const sync = @import("../util/sync.zig");
 const lapic = @import("lapic.zig");
 const logger = std.log.scoped(.arch);
 
@@ -10,7 +10,7 @@ pub const cpu = @import("cpu.zig");
 
 // globals
 pub var ic = lapic.LapicController{};
-var gdt_lock = smp.SpinLock{};
+var gdt_lock = sync.SpinMutex{};
 var gdt_table = GDT{};
 
 pub const Descriptor = extern struct {
@@ -147,8 +147,8 @@ pub fn setIrql(level: Irql) void {
 }
 
 pub fn loadTSS(tss: *TSS) void {
-    gdt_lock.acq();
-    defer gdt_lock.rel();
+    gdt_lock.lock();
+    defer gdt_lock.unlock();
 
     var addr: u64 = @ptrToInt(tss);
 
