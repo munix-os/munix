@@ -1,7 +1,7 @@
 .POSIX:
 
 INTERNALZIGFLAGS := \
-	-Drelease-safe=true
+	-Doptimize=ReleaseSafe
 
 .PHONY: all
 all: kernel

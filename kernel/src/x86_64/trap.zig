@@ -82,7 +82,7 @@ pub fn load() void {
     };
 
     if (!entries_generated) {
-        for (genStubTable()) |stub, idx| {
+        for (genStubTable(), 0..) |stub, idx| {
             entries[idx] = Entry.fromPtr(@as(u64, @ptrToInt(stub)), 0);
         }
 

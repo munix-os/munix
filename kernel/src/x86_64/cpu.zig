@@ -162,18 +162,23 @@ pub fn printBrandName() void {
     if (!smp.isBsp())
         return;
 
-    var brand: [12]u32 = undefined;
+    var raw_brand: [12]u32 = undefined;
     var leaf1 = arch.cpuid(0x80000002, 0);
     var leaf2 = arch.cpuid(0x80000003, 0);
     var leaf3 = arch.cpuid(0x80000004, 0);
 
-    brand[0..12].* = .{
+    raw_brand[0..12].* = .{
         leaf1.eax, leaf1.ebx, leaf1.ecx, leaf1.edx,
         leaf2.eax, leaf2.ebx, leaf2.ecx, leaf2.edx,
         leaf3.eax, leaf3.ebx, leaf3.ecx, leaf3.edx,
     };
 
-    sink.info("core name is {s}", .{@ptrCast([*]u8, &brand)[0 .. 12 * 4]});
+    // remove leading spaces
+    var start: usize = 0;
+    var brand: [*]u8 = @ptrCast([*]u8, &raw_brand)[0 .. 12 * 4];
+    while (brand[start] == ' ') : (start += 1) {}
+
+    sink.info("core name is {s}", .{brand[start .. 12 * 4]});
 }
 
 pub fn setupFpu() void {
@@ -261,7 +266,7 @@ pub fn init() void {
 fn syscallEntry() callconv(.Naked) void {
     // zig fmt: off
     asm volatile (
-        // perform a swapgs and switch to the kernel stack 
+        // perform a swapgs and switch to the kernel stack
         \\swapgs
         \\movq %rsp, %%gs:16
         \\movq %%gs:28, %rsp

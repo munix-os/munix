@@ -35,6 +35,11 @@ var log_buffer: [16 * 4096]u8 = undefined;
 var log_lock = sync.SpinMutex{};
 var limine_terminal_cr3: u64 = 0;
 
+pub const std_options = struct {
+    pub const log_level = .debug;
+    pub const logFn = log;
+};
+
 pub fn log(
     comptime level: std.log.Level,
     comptime scope: anytype,

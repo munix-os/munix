@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) !void {
+pub fn build(b: *std.Build) !void {
     // Define a freestanding x86_64 cross-compilation target.
     var target: std.zig.CrossTarget = .{
         .cpu_arch = .x86_64,
@@ -18,14 +18,23 @@ pub fn build(b: *std.build.Builder) !void {
     target.cpu_features_sub.addFeature(@enumToInt(Features.avx2));
     target.cpu_features_add.addFeature(@enumToInt(Features.soft_float));
 
+    const optimize = b.standardOptimizeOption(.{});
+    const options: std.Build.ExecutableOptions = .{
+        .name = "kernel",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    };
+
+    const limine = b.createModule(.{
+        .source_file = .{ .path = "limine-zig/limine.zig" },
+    });
+
     // Build the kernel itself.
-    const mode = b.standardReleaseOptions();
-    const kernel = b.addExecutable("kernel", "src/main.zig");
+    const kernel = b.addExecutable(options);
     kernel.code_model = .kernel;
-    kernel.setBuildMode(mode);
-    kernel.addPackagePath("limine", "limine-zig/limine.zig");
+    kernel.addModule("limine", limine);
     kernel.addIncludePath("../user/build/system-root/usr/include");
     kernel.setLinkerScriptPath(.{ .path = "linker-x86_64.ld" });
-    kernel.setTarget(target);
     kernel.install();
 }
