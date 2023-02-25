@@ -4,8 +4,8 @@ const logger = std.log.scoped(.main);
 
 // modules
 pub const arch = @import("x86_64/arch.zig");
-pub const acpi = @import("acpi.zig");
 pub const sync = @import("util/sync.zig");
+pub const dev = @import("dev/dev.zig");
 pub const pmm = @import("pmm.zig");
 pub const vmm = @import("vmm.zig");
 pub const smp = @import("smp.zig");
@@ -113,6 +113,6 @@ fn kernel_main() !void {
     arch.setupCpu();
     try pmm.init();
     try vmm.init();
-    try acpi.init();
+    try dev.acpi.init();
     try smp.init();
 }

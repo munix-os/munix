@@ -44,7 +44,7 @@ pub const Header = extern struct {
     creator_id: u32 align(1),
     creator_revision: u32 align(1),
 
-    fn getContents(self: *Header) []const u8 {
+    pub fn getContents(self: *Header) []const u8 {
         return @ptrCast([*]const u8, self)[0..self.length][@sizeOf(Header)..];
     }
 };

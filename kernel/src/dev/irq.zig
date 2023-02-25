@@ -1,92 +1,112 @@
 const std = @import("std");
-const trap = @import("root").arch.trap;
 const smp = @import("root").smp;
+const trap = @import("root").arch.trap;
+const sync = @import("../util/sync.zig");
 const allocator = @import("root").allocator;
 const sink = std.log.scoped(.irq);
 
-pub const IRQ_MASKED: u8 = 0b0001;
-pub const IRQ_PENDING: u8 = 0b0010;
-pub const IRQ_INSERVICE: u8 = 0b0100;
-pub const IRQ_SMPSAFE: u8 = 0b1000;
+// zig fmt: off
+pub const IRQ_MASKED:    u8 = 0b00001;
+pub const IRQ_DISABLED:  u8 = 0b00010;
+pub const IRQ_PENDING:   u8 = 0b00100;
+pub const IRQ_INSERVICE: u8 = 0b01000;
+pub const IRQ_SMPSAFE:   u8 = 0b10000;
 
-const IrqAction = enum {
-    nothing,
-    onlyEoi,
-    maskAndEoi,
+// zig fmt: on
+pub const IrqType = enum {
+    none,
+    edge,
+    level,
+    smpirq,
 };
 
 pub const IrqHandler = struct {
-    context: ?*anyopaque = null,
+    priv_data: ?*anyopaque = null,
     func: *const fn (*IrqHandler, *trap.TrapFrame) void,
     pin: *IrqPin,
 };
 
 pub const IrqPin = struct {
     handlers: std.ArrayList(IrqHandler) = undefined,
-    lock: sync.SpinMutex = .{},
-    action: IrqAction = .nothing,
-
-    priv_data: *anyopaque = undefined,
+    context: *anyopaque = undefined,
     name: []const u8 = undefined,
+
+    lock: sync.SpinMutex = .{},
+    kind: IrqType = .none,
     flags: u8 = 0,
 
     setMask: *const fn (*IrqPin, bool) void = undefined,
-    program: *const fn (*IrqPin, bool, bool) IrqAction = undefined,
+    configure: *const fn (*IrqPin, bool, bool) IrqType = undefined,
     eoi: *const fn (*IrqPin) void = undefined,
 
-    pub fn lockFreeTrigger(self: *IrqPin, frame: *trap.TrapFrame, can_modify: bool) void {
-        if (self.flags & IRQ_MASKED) {
-            sink.warn("hardware race condition detected for pin \"{s}\"!", .{self.name});
-            self.eoi();
-            return;
-        }
-
-        switch (self.action) {
-            .onlyEoi => {
-                self.eoi();
-            },
-            .maskAndEoi => {
-                self.setMask(true);
-                if (can_modify) {
-                    self.flags |= IRQ_MASKED;
-                }
-                self.eoi();
-            },
-            .nothing => unreachable,
-        }
-
-        self.callHandlers(frame);
-
-        if (self.action == .maskAndEoi) {
-            self.setMask(false);
-            if (can_modify) {
-                self.flags &= ~IRQ_MASKED;
-            }
-        }
-    }
-
-    pub fn callHandlers(self: *IrqPin, frame: *trap.TrapFrame) void {
+    fn handleIrqSmp(self: *IrqPin, frame: *trap.TrapFrame) void {
         for (self.handlers.items) |hnd| {
             hnd.func(frame);
         }
     }
 
+    fn handleIrq(self: *IrqPin, frame: *trap.TrapFrame) void {
+        self.flags &= ~IRQ_PENDING;
+        self.flags |= IRQ_INSERVICE;
+        self.lock.unlock();
+
+        handleIrqSmp(frame);
+
+        self.lock.lock();
+        self.flags &= ~IRQ_INSERVICE;
+    }
+
     pub fn trigger(self: *IrqPin, frame: *trap.TrapFrame) void {
-        if (@atomicLoad(u8, &self.flags, .SeqCst) & IRQ_SMPSAFE) {
-            // take the lock-free fastpath
-            self.lockFreeTrigger(frame, false);
+        if (@atomicLoad(IrqType, &self.kind, .SeqCst) == .smpirq) {
+            // take the SMP fastpath
+            self.handleIrqSmp(frame);
+
+            self.eoi();
             return;
         }
 
         self.lock.lock();
-        defer self.lock.unlock();
 
-        self.lockFreeTrigger(frame, true);
+        switch (self.kind) {
+            .level => {
+                self.setMask(true);
+                self.eoi();
+
+                if (self.flags & IRQ_DISABLED != 0) {
+                    self.flags |= IRQ_PENDING;
+                    self.lock.unlock();
+                    return;
+                }
+
+                self.handleIrq(frame);
+
+                if (self.flags & (IRQ_DISABLED | IRQ_MASKED) == 0)
+                    self.setMask(false);
+
+                self.lock.unlock();
+            },
+            .edge => {
+                if (self.flags & IRQ_DISABLED != 0 or
+                    self.handlers.items.len == 0)
+                {
+                    self.flags |= IRQ_PENDING;
+                    self.setMask(true);
+                    self.eoi();
+
+                    self.lock.unlock();
+                    return;
+                }
+
+                self.eoi();
+                self.handleIrq();
+            },
+            else => @panic("unknown IRQ type!"),
+        }
     }
 
     pub fn setup(self: *IrqPin, name: []const u8, level: bool, high_trig: bool) void {
         self.name = name;
-        self.action = self.program(level, high_trig);
+        self.kind = self.configure(level, high_trig);
         self.handlers = std.ArrayList(IrqHandler).init(allocator());
     }
 

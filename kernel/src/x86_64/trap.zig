@@ -1,9 +1,9 @@
 const std = @import("std");
 const arch = @import("root").arch;
+const log = std.log.scoped(.trap).err;
 
 const TrapStub = *const fn () callconv(.Naked) void;
 const TrapHandler = *const fn (*TrapFrame) callconv(.C) void;
-const log = std.log.scoped(.trap).err;
 
 export var handlers = [_]TrapHandler{handleException} ** 32 ++ [_]TrapHandler{handleIrq} ** 224;
 var entries: [256]Entry = undefined;

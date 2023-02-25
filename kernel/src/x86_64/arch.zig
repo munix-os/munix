@@ -1,15 +1,14 @@
 const std = @import("std");
 const sync = @import("../util/sync.zig");
-const lapic = @import("lapic.zig");
 const logger = std.log.scoped(.arch);
 
 // modules
 pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
 pub const cpu = @import("cpu.zig");
+pub const ic = @import("apic.zig");
 
 // globals
-pub var ic = lapic.LapicController{};
 var gdt_lock = sync.SpinMutex{};
 var gdt_table = GDT{};
 

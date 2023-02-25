@@ -118,7 +118,7 @@ pub fn init() !void {
             getCoreInfo().tss.rsp0 = createKernelStack().?;
             arch.loadTSS(&getCoreInfo().tss);
 
-            arch.ic.setup();
+            try arch.ic.init();
             continue;
         }
 
