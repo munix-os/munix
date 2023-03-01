@@ -11,7 +11,7 @@ kernel: limine-zig
 	zig build $(INTERNALZIGFLAGS) $(ZIGFLAGS)
 
 limine-zig:
-	git clone https://github.com/munix-os/limine-zig.git --depth=1
+	git clone https://github.com/limine-bootloader/limine-zig.git --depth=1
 
 .PHONY: clean
 clean:
