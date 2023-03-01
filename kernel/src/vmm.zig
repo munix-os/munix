@@ -44,24 +44,36 @@ pub fn createPagemap() !*paging.PageMap {
     return result;
 }
 
+fn mapKernelSection(
+    comptime name: []const u8,
+    kaddr_response: *limine.KernelAddressResponse,
+    map_flags: MapFlags,
+) void {
+    const begin = @extern(*u8, .{ .name = name ++ "_begin" });
+    const end = @extern(*u8, .{ .name = name ++ "_end" });
+
+    const begin_aligned = std.mem.alignBackward(@ptrToInt(begin), 0x1000);
+    const end_aligned = std.mem.alignForward(@ptrToInt(end), 0x1000);
+    const physical = begin_aligned - kaddr_response.virtual_base + kaddr_response.physical_base;
+    const size = std.mem.alignForward(end_aligned - begin_aligned, 0x1000);
+
+    for (0..size / 0x1000) |i| {
+        kernel_pagemap.mapPage(map_flags, begin_aligned + i * 0x1000, physical + i * 0x1000, false);
+    }
+}
+
 pub fn init() !void {
     kernel_pagemap.root = pmm.allocPages(1) orelse return error.OutOfMemory;
-    var map_flags: MapFlags = .{ .read = true, .write = true, .exec = true };
 
     // map some simple stuff
     var resp = kaddr_request.response orelse return error.MissingBootInfo;
-    var pbase: usize = resp.physical_base;
-    var vbase: usize = resp.virtual_base;
-    var i: usize = 0;
 
-    while (i < (0x400 * 0x1000)) : (i += 0x1000) {
-        kernel_pagemap.mapPage(map_flags, vbase + i, pbase + i, false);
-    }
+    mapKernelSection("text", resp, .{ .read = true, .write = false, .exec = true });
+    mapKernelSection("data", resp, .{ .read = true, .write = true, .exec = false });
+    mapKernelSection("rodata", resp, .{ .read = true, .write = false, .exec = false });
 
-    i = 0;
-    map_flags.exec = false;
-    while (i < @intCast(usize, (0x800 * 0x200000))) : (i += 0x200000) {
-        kernel_pagemap.mapPage(map_flags, toHigherHalf(i), i, true);
+    for (0..0x800) |i| {
+        kernel_pagemap.mapPage(.{ .read = true, .write = true, .exec = false }, toHigherHalf(i * 0x200000), i * 0x200000, true);
     }
 
     // them map everything else
@@ -70,11 +82,11 @@ pub fn init() !void {
             continue;
         }
 
-        var base: usize = std.mem.alignBackward(ent.base, 0x200000);
-        i = 0;
+        const base = std.mem.alignBackward(ent.base, 0x200000);
+        const pages = std.mem.alignForward(ent.length, 0x200000) / 0x200000;
 
-        while (i < std.mem.alignForward(ent.length, 0x200000)) : (i += 0x200000) {
-            kernel_pagemap.mapPage(map_flags, toHigherHalf(base + i), base + i, true);
+        for (0..pages) |i| {
+            kernel_pagemap.mapPage(.{ .read = true, .write = true, .exec = false }, toHigherHalf(base + i * 0x200000), base + i * 0x200000, true);
         }
     }
 
