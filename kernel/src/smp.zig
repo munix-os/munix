@@ -92,7 +92,9 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
 
     // let BSP know we're done, then off we go!
     _ = booted_cores.fetchAdd(1, .Monotonic);
-    while (true) {}
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
 
 fn createKernelStack() ?u64 {

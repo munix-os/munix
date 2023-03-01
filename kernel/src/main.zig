@@ -105,7 +105,9 @@ export fn entry() callconv(.C) noreturn {
     };
 
     logger.warn("init complete, end of kernel reached!", .{});
-    while (true) {}
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
 
 fn kernel_main() !void {
