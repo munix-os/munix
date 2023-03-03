@@ -1,6 +1,9 @@
 .POSIX:
 
-INTERNALZIGFLAGS := \
+# remove built-in rules and variables.
+override MAKEFLAGS += -rR
+
+ZIGOPTS := \
 	-Doptimize=ReleaseSafe
 
 .PHONY: all
@@ -8,7 +11,7 @@ all: kernel
 
 .PHONY: kernel
 kernel: limine-zig
-	zig build $(INTERNALZIGFLAGS) $(ZIGFLAGS)
+	zig build $(ZIGOPTS)
 
 limine-zig:
 	git clone https://github.com/limine-bootloader/limine-zig.git --depth=1

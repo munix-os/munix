@@ -57,8 +57,9 @@ SECTIONS
 
     data_end = .;
 
-    /* Discard notes since they may cause issues on some hosts. */
+    /* Discard .note.* and .eh_frame since they may cause issues on some hosts. */
     /DISCARD/ : {
+        *(.eh_frame)
         *(.note .note.*)
     }
 }
