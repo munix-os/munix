@@ -81,7 +81,7 @@ pub export fn ap_entry(info: *limine.SmpInfo) callconv(.C) noreturn {
     // setup the important stuff
     vmm.kernel_pagemap.load();
     createCoreInfo(info) catch unreachable;
-    arch.setupCpu();
+    arch.init();
     arch.ic.enable();
 
     // load the TSS

@@ -3,7 +3,6 @@ const smp = @import("root").smp;
 const trap = @import("root").arch.trap;
 const sync = @import("../util/sync.zig");
 const allocator = @import("root").allocator;
-const sink = std.log.scoped(.irq);
 
 // zig fmt: off
 pub const IRQ_MASKED:    u8 = 0b00001;

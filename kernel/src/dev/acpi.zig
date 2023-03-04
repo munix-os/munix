@@ -1,6 +1,8 @@
 const std = @import("std");
 const limine = @import("limine");
 const vmm = @import("root").vmm;
+const clock = @import("root").dev.clock;
+const allocator = @import("root").allocator;
 const sink = std.log.scoped(.acpi);
 
 pub const GenericAddress = extern struct {
@@ -115,14 +117,27 @@ pub const FADT = extern struct {
     x_gpe1_blk: GenericAddress align(1),
 };
 
+var acpi_pm_tc: clock.TimeCounter = .{
+    .name = "ACPI PM Timer",
+    .quality = 600,
+    .bits = 0,
+    .mask = 0,
+    .frequency = 3580,
+    .priv = undefined,
+    .getValue = &pmTimerRead,
+};
+
 pub export var rsdp_request: limine.RsdpRequest = .{};
-var timer_block: GenericAddress = undefined;
-var timer_bits: usize = 0;
 var xsdt: ?*Header = null;
 var rsdt: ?*Header = null;
 
 fn getEntries(comptime T: type, header: *Header) []align(1) const T {
     return std.mem.bytesAsSlice(T, header.getContents());
+}
+
+fn pmTimerRead(tc: *clock.TimeCounter) u64 {
+    var timer_block = @ptrCast(*align(1) GenericAddress, tc.priv);
+    return @intCast(u64, timer_block.read(u32));
 }
 
 fn printTable(sdt: *Header) void {
@@ -160,46 +175,6 @@ pub fn getTable(signature: []const u8) ?*Header {
     return null;
 }
 
-pub fn pmSleep(us: u64) void {
-    var shift: u64 = @as(u64, 1) << @truncate(u6, timer_bits);
-    var target = (us * 3) + ((us * 5) / 10) + ((us * 8) / 100);
-
-    // find out how many 'remaining' ticks to wait after 'n' overflows
-    var n: u64 = target / shift;
-    var remaining: u64 = target % shift;
-
-    // bump 'remaining' to reflect current timer state
-    var cur_ticks = timer_block.read(u32);
-    remaining += cur_ticks;
-
-    // adjust 'n' to reflect current timer state
-    if (remaining < cur_ticks) {
-        n += 1;
-    } else {
-        n += remaining / shift;
-        remaining = remaining % shift;
-    }
-
-    // next, wait for 'n' overflows to happen
-    var new_ticks: u32 = 0;
-    while (n > 0) {
-        new_ticks = timer_block.read(u32);
-        if (new_ticks < cur_ticks) {
-            n -= 1;
-        }
-        cur_ticks = new_ticks;
-    }
-
-    // finally, wait the 'remaining' ticks out
-    while (remaining > cur_ticks) {
-        new_ticks = timer_block.read(u32);
-        if (new_ticks < cur_ticks) {
-            break;
-        }
-        cur_ticks = new_ticks;
-    }
-}
-
 pub fn init() !void {
     var resp = rsdp_request.response orelse return error.MissingBootInfo;
 
@@ -235,16 +210,17 @@ pub fn init() !void {
     // setup the ACPI timer
     if (getTable("FACP")) |fadt_sdt| {
         var fadt = @ptrCast(*align(1) const FADT, fadt_sdt.getContents()[0..]);
+        var timer_block = try allocator().create(GenericAddress);
 
         if (xsdp.revision >= 2 and fadt.x_pm_timer_blk.base_type == 0) {
-            timer_block = fadt.x_pm_timer_blk;
+            timer_block.* = fadt.x_pm_timer_blk;
             timer_block.base = vmm.toHigherHalf(timer_block.base);
         } else {
             if (fadt.pm_timer_blk == 0 or fadt.pm_timer_length != 4) {
                 @panic("ACPI Timer is unsupported/malformed");
             }
 
-            timer_block = GenericAddress{
+            timer_block.* = GenericAddress{
                 .base = fadt.pm_timer_blk,
                 .base_type = 1,
                 .bit_width = 32,
@@ -254,16 +230,21 @@ pub fn init() !void {
         }
 
         if ((fadt.flags & (1 << 8)) == 0) {
-            timer_bits = 32;
+            acpi_pm_tc.bits = 32;
+            acpi_pm_tc.mask = ~@as(u32, 0);
         } else {
-            timer_bits = 24;
+            acpi_pm_tc.bits = 24;
+            acpi_pm_tc.mask = ~@as(u24, 0);
         }
 
         if (timer_block.base_type == 0) {
-            sink.info("detected MMIO acpi timer, with {}-bit counter width", .{timer_bits});
+            sink.info("detected MMIO acpi timer, with {}-bit counter width", .{acpi_pm_tc.bits});
         } else {
-            sink.info("detected PIO (Port IO) acpi timer, with {}-bit counter width", .{timer_bits});
+            sink.info("detected PIO (Port IO) acpi timer, with {}-bit counter width", .{acpi_pm_tc.bits});
         }
+
+        acpi_pm_tc.priv = timer_block;
+        try clock.register(&acpi_pm_tc);
     } else {
         return error.InvalidHardware;
     }

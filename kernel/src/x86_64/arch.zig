@@ -255,15 +255,12 @@ pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
     };
 }
 
-pub fn setupCpu() void {
+pub fn init() void {
     gdt_table.load();
     trap.load();
     cpu.init();
 }
 
-//pub fn setupCpu() void {
-//    logger.info("performing early cpu init...", .{});
-//    trap.init();
-//
-//    setupAP();
-//}
+pub fn lateInit() !void {
+    try cpu.addTscCounter();
+}

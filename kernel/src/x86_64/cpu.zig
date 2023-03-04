@@ -1,6 +1,7 @@
 const std = @import("std");
 const arch = @import("root").arch;
 const smp = @import("root").smp;
+const clock = @import("root").dev.clock;
 const sink = std.log.scoped(.cpu);
 const trap = arch.trap;
 
@@ -44,6 +45,16 @@ comptime {
     std.debug.assert(@sizeOf(FpuState) == 512);
     std.debug.assert(@sizeOf(XSaveState) == 512 + 64);
 }
+
+var cpu_tsc_tc: clock.TimeCounter = .{
+    .name = "x86 Timestamp Counter",
+    .quality = 900,
+    .bits = 64,
+    .frequency = 0,
+    .mask = ~@as(u64, 0),
+    .priv = undefined,
+    .getValue = undefined,
+};
 
 // the combined bits of every supported XCR0 extension
 const supported_mask = 0x602e7;
@@ -235,6 +246,51 @@ pub fn setupFpu() void {
             .{ @tagName(fpu_mode), fpu_storage_size },
         );
     }
+}
+
+pub fn tscReadAmd(tc: *clock.TimeCounter) u64 {
+    _ = tc;
+    asm volatile ("mfence" ::: "memory");
+    return @call(.always_inline, arch.rdtsc, .{});
+}
+
+pub fn tscReadIntel(tc: *clock.TimeCounter) u64 {
+    _ = tc;
+    asm volatile ("lfence" ::: "memory");
+    return @call(.always_inline, arch.rdtsc, .{});
+}
+
+pub fn addTscCounter() !void {
+    // discover if the CPU is manufactured by Intel
+    // or AMD, and set the read function
+    if (arch.cpuid(0, 0).ebx == 0x756E6547) { // 'Genu'
+        cpu_tsc_tc.getValue = &tscReadIntel;
+    } else if (arch.cpuid(0, 0).ebx == 0x68747541) { // 'Auth'
+        cpu_tsc_tc.getValue = &tscReadAmd;
+    } else {
+        return; // unknown CPU brand
+    }
+
+    if ((arch.cpuid(0x80000007, 0).edx & 0x100) != 0x100) {
+        return; // no support for invariant TSC
+    }
+
+    for (0..4) |_| {
+        var start = cpu_tsc_tc.getValue(&cpu_tsc_tc);
+        clock.wait(1000000);
+        cpu_tsc_tc.frequency += cpu_tsc_tc.getValue(&cpu_tsc_tc) - start;
+    }
+
+    cpu_tsc_tc.frequency /= 4;
+    var freq = cpu_tsc_tc.frequency;
+
+    sink.info("core frequency is {}.{}{} GHz", .{
+        freq / 1000000,
+        (freq / 100000) % 10,
+        (freq / 10000) % 10,
+    });
+
+    try clock.register(&cpu_tsc_tc);
 }
 
 pub fn init() void {
