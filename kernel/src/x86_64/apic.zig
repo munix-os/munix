@@ -4,8 +4,8 @@ const smp = @import("root").smp;
 const arch = @import("root").arch;
 const irq = @import("root").dev.irq;
 const acpi = @import("root").dev.acpi;
-const allocator = @import("root").allocator;
 const sync = @import("../util/sync.zig");
+const allocator = @import("root").allocator;
 const sink = std.log.scoped(.apic);
 
 pub var io_apics: std.ArrayList(IoApic) = undefined;
@@ -19,11 +19,23 @@ inline fn regoff(n: usize) u32 {
 
 pub const LocalApic = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
+    lvts: std.ArrayList(irq.IrqPin) = undefined,
+
+    pub const LvtType = enum(u4) {
+        timer = 1,
+        perf = 2,
+        thermal = 3,
+    };
 
     // general regs
     const REG_VER = 0x30;
     const REG_EOI = 0xB0;
     const REG_SPURIOUS = 0xF0;
+
+    // local vector table regs
+    const REG_LVT_TIMER = 0x320;
+    const REG_LVT_PMC = 0x340;
+    const REG_LVT_THERM = 0x330;
 
     pub fn read(self: *LocalApic, reg: u32) u32 {
         return @intToPtr(*volatile u32, self.mmio_base + reg).*;
@@ -33,7 +45,13 @@ pub const LocalApic = struct {
         @intToPtr(*volatile u32, self.mmio_base + reg).* = value;
     }
 
-    pub fn init(self: *LocalApic) void {
+    pub fn getLvtPin(self: *LocalApic, kind: LvtType) *irq.IrqPin {
+        return self.lvts[@enumToInt(kind)];
+    }
+
+    pub fn init(self: *LocalApic) !void {
+        self.lvts = std.ArrayList(irq.IrqPin).init(allocator());
+
         var mmio_base = vmm.toHigherHalf(arch.rdmsr(0x1B) & 0xFFFFF000);
         if (mmio_base != self.mmio_base) {
             sink.warn("mmio base 0x{X:0>16} is not the x86 default!", .{mmio_base});
@@ -48,6 +66,29 @@ pub const LocalApic = struct {
 
         // enable the APIC
         self.enable();
+
+        // setup the LVT IRQ pins
+        for (1..4) |i| {
+            var kind = @intToEnum(LvtType, i);
+            var pin_name = try std.fmt.allocPrint(allocator(), "lapic-lvt-{any}", .{kind});
+            var pin: irq.IrqPin = .{};
+
+            pin = .{
+                .context = undefined,
+                .setMask = &LocalApic.mask,
+                .eoi = &IoApic.eoi,
+                .configure = &LocalApic.configure,
+                .name = pin_name,
+            };
+
+            switch (kind) {
+                .timer => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_TIMER),
+                .perf => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_PMC),
+                .thermal => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_THERM),
+            }
+
+            try self.lvts.append(pin);
+        }
     }
 
     pub fn enable(self: *LocalApic) void {
@@ -59,6 +100,44 @@ pub const LocalApic = struct {
     pub fn submitEoi(self: *LocalApic, pin: u8) void {
         _ = pin;
         self.write(REG_EOI, 0);
+    }
+
+    pub fn mask(pin: *irq.IrqPin, state: bool) void {
+        var reg = @ptrCast(*align(1) volatile u32, pin.context);
+
+        if (state) {
+            reg.* |= (1 << 16);
+        } else {
+            reg.* &= ~@as(u32, (1 << 16));
+        }
+    }
+
+    pub fn configure(pin: *irq.IrqPin, level: bool, high: bool) irq.IrqType {
+        var reg = @ptrCast(*align(1) volatile u32, pin.context);
+        var flags: u32 = 0;
+        var vec: u32 = 0;
+
+        // according to the Intel SDM (vol 3, chapter 10.5.1), all LVTs
+        // except for LINT{0/1} are permenantly edge and high triggered.
+        _ = level;
+        _ = high;
+
+        slots_lock.lock();
+        defer slots_lock.unlock();
+
+        for (slots.items, 0..) |slot, i| {
+            if (slot.active)
+                continue;
+
+            slots.items[i].link(pin);
+            vec = @intCast(u32, i);
+        }
+
+        if (vec == 0)
+            @panic("Out of IRQ vectors! (LAPIC)");
+
+        reg.* |= vec | flags;
+        return .edge;
     }
 };
 
@@ -138,26 +217,31 @@ pub const IoApic = struct {
     pub fn setup(self: *IoApic) !void {
         self.pins = std.ArrayList(irq.IrqPin).init(allocator());
         self.pin_count = ((self.read(REG_VER) >> 16) & 0xFF) + 1;
-        sink.debug("IO-APIC({}): a total of {} pins supported (base={})", .{ io_apics.items.len - 1, self.pin_count, self.gsi_base });
+        sink.debug("IO-APIC({}): a total of {} pins supported (base={})", .{
+            io_apics.items.len - 1,
+            self.pin_count,
+            self.gsi_base,
+        });
 
         for (0..self.pin_count) |i| {
-            var pin_name = try std.fmt.allocPrint(allocator(), "ioapic-{}", .{i});
-            var pin = try allocator().create(irq.IrqPin);
+            var pin_name = try std.fmt.allocPrint(allocator(), "ioapic-{}-{}", .{ self.gsi_base, i });
             var context = try allocator().create(PinContext);
-            errdefer allocator().delete(pin);
+            var pin: irq.IrqPin = undefined;
 
             context.* = .{
                 .parent = self,
                 .index = i,
             };
 
-            pin.* = .{
+            pin = .{
                 .context = context,
                 .setMask = &IoApic.mask,
                 .eoi = &IoApic.eoi,
                 .configure = &IoApic.configure,
                 .name = pin_name,
             };
+
+            try self.pins.append(pin);
         }
     }
 };
@@ -202,7 +286,7 @@ pub fn init() !void {
         contents = contents[std.math.max(2, len)..];
     }
 
-    ic.init();
+    try ic.init();
 }
 
 pub fn enable() void {
