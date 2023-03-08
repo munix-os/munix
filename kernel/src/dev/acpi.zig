@@ -1,9 +1,10 @@
 const std = @import("std");
 const limine = @import("limine");
-const vmm = @import("root").vmm;
-const clock = @import("root").dev.clock;
-const allocator = @import("root").allocator;
 const sink = std.log.scoped(.acpi);
+
+const vmm = @import("../vmm.zig");
+const clock = @import("clock.zig");
+const allocator = @import("root").allocator;
 
 pub const GenericAddress = extern struct {
     base_type: u8 align(1),

@@ -2,14 +2,14 @@ const std = @import("std");
 const limine = @import("limine");
 const logger = std.log.scoped(.main);
 
-// modules
+// imports
 pub const arch = @import("x86_64/arch.zig");
-pub const sync = @import("util/sync.zig");
-pub const dev = @import("dev/dev.zig");
-pub const pmm = @import("pmm.zig");
-pub const vmm = @import("vmm.zig");
-pub const smp = @import("smp.zig");
-pub const vfs = @import("vfs.zig");
+const sync = @import("util/sync.zig");
+const dev = @import("dev/dev.zig");
+const pmm = @import("pmm.zig");
+const vmm = @import("vmm.zig");
+const smp = @import("smp.zig");
+const vfs = @import("vfs.zig");
 
 var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = sync.SpinMutex }){};
 pub export var terminal_request: limine.TerminalRequest = .{};

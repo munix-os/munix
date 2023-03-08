@@ -1,8 +1,9 @@
 const std = @import("std");
-const smp = @import("root").smp;
 const trap = @import("root").arch.trap;
-const sync = @import("../util/sync.zig");
 const allocator = @import("root").allocator;
+
+const smp = @import("../smp.zig");
+const sync = @import("../util/sync.zig");
 
 // zig fmt: off
 pub const IRQ_MASKED:    u8 = 0b00001;
@@ -132,3 +133,9 @@ pub const IrqSlot = struct {
         self.active = true;
     }
 };
+
+//pub export fn drainSoftIrqs() callconv(.C) void {
+//    while (smp.getCoreInfo().softirqs.pop()) |item| {
+//        var irq = @fieldParentPtr();
+//    }
+//}

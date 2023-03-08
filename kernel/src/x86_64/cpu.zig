@@ -1,9 +1,10 @@
 const std = @import("std");
-const arch = @import("root").arch;
-const smp = @import("root").smp;
-const clock = @import("root").dev.clock;
 const sink = std.log.scoped(.cpu);
-const trap = arch.trap;
+
+const arch = @import("arch.zig");
+const trap = @import("trap.zig");
+const smp = @import("../smp.zig");
+const clock = @import("../dev/clock.zig");
 
 const SaveType = enum {
     fxsave,

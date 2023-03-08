@@ -1,12 +1,14 @@
 const std = @import("std");
-const vmm = @import("root").vmm;
-const smp = @import("root").smp;
-const arch = @import("root").arch;
-const irq = @import("root").dev.irq;
-const acpi = @import("root").dev.acpi;
-const sync = @import("../util/sync.zig");
 const allocator = @import("root").allocator;
 const sink = std.log.scoped(.apic);
+
+// imports
+const arch = @import("arch.zig");
+const vmm = @import("../vmm.zig");
+const smp = @import("../smp.zig");
+const irq = @import("../dev/irq.zig");
+const acpi = @import("../dev/acpi.zig");
+const sync = @import("../util/sync.zig");
 
 pub var io_apics: std.ArrayList(IoApic) = undefined;
 pub var slots: std.ArrayList(irq.IrqSlot) = undefined;

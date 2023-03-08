@@ -1,9 +1,10 @@
 const std = @import("std");
 const limine = @import("limine");
-const sync = @import("util/sync.zig");
-const vmm = @import("root").vmm;
 const sink = std.log.scoped(.pmm);
 const PAGE_SIZE = std.mem.page_size;
+
+const vmm = @import("vmm.zig");
+const sync = @import("util/sync.zig");
 
 pub const Bitmap = struct {
     bits: [*]u8,

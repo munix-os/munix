@@ -1,5 +1,5 @@
-const vmm = @import("root").vmm;
-const pmm = @import("root").pmm;
+const vmm = @import("../vmm.zig");
+const pmm = @import("../pmm.zig");
 const sync = @import("../util/sync.zig");
 
 pub const PageMap = struct {

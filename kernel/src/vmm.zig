@@ -1,8 +1,9 @@
+const std = @import("std");
 const limine = @import("limine");
+
+const pmm = @import("pmm.zig");
 const paging = @import("root").arch.paging;
 const allocator = @import("root").allocator;
-const pmm = @import("root").pmm;
-const std = @import("std");
 
 pub const CacheMode = enum(u4) { uncached, write_combining, write_protect, write_back };
 

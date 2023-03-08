@@ -1,8 +1,9 @@
 const std = @import("std");
-const atomic = std.atomic;
-const sync = @import("../util/sync.zig");
 const arch = @import("root").arch;
 const allocator = @import("root").allocator;
+const sync = @import("../util/sync.zig");
+
+const atomic = std.atomic;
 
 // zig fmt: off
 pub const TimeCounter = struct {

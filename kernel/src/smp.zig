@@ -1,13 +1,15 @@
+const std = @import("std");
 const limine = @import("limine");
-const target = @import("builtin").target;
 const atomic = @import("std").atomic;
 const arch = @import("root").arch;
-const vmm = @import("root").vmm;
-const pmm = @import("root").pmm;
-const std = @import("std");
-const smp = @import("root").smp;
+const target = @import("builtin").target;
 
+const vmm = @import("vmm.zig");
+const pmm = @import("pmm.zig");
+const smp = @import("smp.zig");
+const irq = @import("dev/irq.zig");
 const allocator = @import("root").allocator;
+
 const sink = std.log.scoped(.smp);
 const zeroInit = std.mem.zeroInit;
 
@@ -18,6 +20,7 @@ pub const CoreInfo = struct {
     user_stack: u64 = 0,
     tss: arch.TSS = .{},
     is_bsp: bool = false,
+    softirqs: std.TailQueue(void) = .{},
 };
 
 pub inline fn isBsp() bool {

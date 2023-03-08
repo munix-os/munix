@@ -1,5 +1,5 @@
 const std = @import("std");
-const arch = @import("root").arch;
+const arch = @import("arch.zig");
 const log = std.log.scoped(.trap).err;
 
 const TrapStub = *const fn () callconv(.Naked) void;

@@ -1,13 +1,12 @@
 const std = @import("std");
 const limine = @import("limine");
-const sync = @import("util/sync.zig");
 const zeroes = std.mem.zeroes;
 const sink = std.log.scoped(.vfs);
-const allocator = @import("root").allocator;
 
-// modules
-const tmpfs = @import("fs/tmpfs.zig");
+const sync = @import("util/sync.zig");
 const libc = @import("util/libc.zig");
+const tmpfs = @import("fs/tmpfs.zig");
+const allocator = @import("root").allocator;
 
 pub const VfsError = error{
     OutOfMemory,
