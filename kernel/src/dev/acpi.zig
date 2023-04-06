@@ -4,6 +4,7 @@ const sink = std.log.scoped(.acpi);
 
 const vmm = @import("../vmm.zig");
 const clock = @import("clock.zig");
+const arch = @import("root").arch;
 const allocator = @import("root").allocator;
 
 pub const GenericAddress = extern struct {
@@ -17,21 +18,7 @@ pub const GenericAddress = extern struct {
         if (self.base_type == 0) { // MMIO
             return @intToPtr(*align(1) volatile T, self.base).*;
         } else {
-            return switch (T) {
-                u8 => asm volatile ("inb %[port], %[result]"
-                    : [result] "={al}" (-> T),
-                    : [port] "N{dx}" (@truncate(u16, self.base)),
-                ),
-                u16 => asm volatile ("inw %[port], %[result]"
-                    : [result] "={ax}" (-> T),
-                    : [port] "N{dx}" (@truncate(u16, self.base)),
-                ),
-                u32 => asm volatile ("inl %[port], %[result]"
-                    : [result] "={eax}" (-> T),
-                    : [port] "N{dx}" (@truncate(u16, self.base)),
-                ),
-                else => @compileError("unsupported type for PIO read ->" ++ @typeName(T)),
-            };
+            return arch.in(T, @truncate(u16, self.base));
         }
     }
 };
@@ -118,19 +105,18 @@ pub const FADT = extern struct {
     x_gpe1_blk: GenericAddress align(1),
 };
 
+pub export var rsdp_request: limine.RsdpRequest = .{};
+var xsdt: ?*Header = null;
+var rsdt: ?*Header = null;
+
 var acpi_pm_tc: clock.TimeCounter = .{
     .name = "ACPI PM Timer",
     .quality = 600,
     .bits = 0,
-    .mask = 0,
     .frequency = 3580,
     .priv = undefined,
     .getValue = &pmTimerRead,
 };
-
-pub export var rsdp_request: limine.RsdpRequest = .{};
-var xsdt: ?*Header = null;
-var rsdt: ?*Header = null;
 
 fn getEntries(comptime T: type, header: *Header) []align(1) const T {
     return std.mem.bytesAsSlice(T, header.getContents());
@@ -138,7 +124,7 @@ fn getEntries(comptime T: type, header: *Header) []align(1) const T {
 
 fn pmTimerRead(tc: *clock.TimeCounter) u64 {
     var timer_block = @ptrCast(*align(1) GenericAddress, tc.priv);
-    return @intCast(u64, timer_block.read(u32));
+    return timer_block.read(u32);
 }
 
 fn printTable(sdt: *Header) void {
@@ -232,10 +218,8 @@ pub fn init() !void {
 
         if ((fadt.flags & (1 << 8)) == 0) {
             acpi_pm_tc.bits = 32;
-            acpi_pm_tc.mask = ~@as(u32, 0);
         } else {
             acpi_pm_tc.bits = 24;
-            acpi_pm_tc.mask = ~@as(u24, 0);
         }
 
         if (timer_block.base_type == 0) {

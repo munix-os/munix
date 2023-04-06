@@ -111,11 +111,10 @@ export fn entry() callconv(.C) noreturn {
 }
 
 fn kernel_main() !void {
-    // setup the essentials
     arch.init();
     try pmm.init();
     try vmm.init();
     try dev.init();
-    try arch.lateInit();
     try smp.init();
+    try arch.lateInit();
 }

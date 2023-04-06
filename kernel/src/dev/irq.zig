@@ -1,9 +1,10 @@
 const std = @import("std");
-const trap = @import("root").arch.trap;
-const allocator = @import("root").allocator;
-
 const smp = @import("../smp.zig");
 const sync = @import("../util/sync.zig");
+
+const trap = @import("root").arch.trap;
+const allocator = @import("root").allocator;
+const cpu_arch = @import("builtin").target.cpu.arch;
 
 // zig fmt: off
 pub const IRQ_MASKED:    u8 = 0b00001;
@@ -11,6 +12,12 @@ pub const IRQ_DISABLED:  u8 = 0b00010;
 pub const IRQ_PENDING:   u8 = 0b00100;
 pub const IRQ_INSERVICE: u8 = 0b01000;
 pub const IRQ_SMPSAFE:   u8 = 0b10000;
+
+pub const PASSIVE_LEVEL: u8 = 0;
+pub const DPC_LEVEL:     u8 = 2;
+pub const DEVICE_LEVEL:  u8 = 12;
+pub const CLOCK_LEVEL:   u8 = 13;
+pub const MAX_LEVEL:     u8 = 15;
 
 // zig fmt: on
 pub const IrqType = enum {
@@ -20,6 +27,12 @@ pub const IrqType = enum {
     smpirq,
 };
 
+pub const Dpc = struct {
+    node: std.TailQueue(void).Node = undefined,
+    func: *const fn (*anyopaque) void = undefined,
+    arg: *anyopaque = undefined,
+};
+
 pub const IrqHandler = struct {
     priv_data: ?*anyopaque = null,
     func: *const fn (*IrqHandler, *trap.TrapFrame) void,
@@ -27,7 +40,7 @@ pub const IrqHandler = struct {
 };
 
 pub const IrqPin = struct {
-    handlers: std.ArrayList(IrqHandler) = undefined,
+    handlers: std.ArrayList(*IrqHandler) = undefined,
     context: *anyopaque = undefined,
     name: []const u8 = undefined,
 
@@ -35,13 +48,13 @@ pub const IrqPin = struct {
     kind: IrqType = .none,
     flags: u8 = 0,
 
-    setMask: *const fn (*IrqPin, bool) void = undefined,
-    configure: *const fn (*IrqPin, bool, bool) IrqType = undefined,
-    eoi: *const fn (*IrqPin) void = undefined,
+    setMask: *const fn (self: *IrqPin, masked: bool) void = undefined,
+    configure: *const fn (self: *IrqPin) void = undefined,
+    eoi: *const fn (self: *IrqPin) void = undefined,
 
     fn handleIrqSmp(self: *IrqPin, frame: *trap.TrapFrame) void {
         for (self.handlers.items) |hnd| {
-            hnd.func(frame);
+            hnd.func(hnd, frame);
         }
     }
 
@@ -50,18 +63,21 @@ pub const IrqPin = struct {
         self.flags |= IRQ_INSERVICE;
         self.lock.unlock();
 
-        handleIrqSmp(frame);
+        self.handleIrqSmp(frame);
 
         self.lock.lock();
         self.flags &= ~IRQ_INSERVICE;
     }
 
     pub fn trigger(self: *IrqPin, frame: *trap.TrapFrame) void {
+        const setMask = self.setMask;
+        const eoi = self.eoi;
+
         if (@atomicLoad(IrqType, &self.kind, .SeqCst) == .smpirq) {
             // take the SMP fastpath
             self.handleIrqSmp(frame);
 
-            self.eoi();
+            eoi(self);
             return;
         }
 
@@ -69,8 +85,8 @@ pub const IrqPin = struct {
 
         switch (self.kind) {
             .level => {
-                self.setMask(true);
-                self.eoi();
+                setMask(self, true);
+                eoi(self);
 
                 if (self.flags & IRQ_DISABLED != 0) {
                     self.flags |= IRQ_PENDING;
@@ -81,7 +97,7 @@ pub const IrqPin = struct {
                 self.handleIrq(frame);
 
                 if (self.flags & (IRQ_DISABLED | IRQ_MASKED) == 0)
-                    self.setMask(false);
+                    setMask(self, false);
 
                 self.lock.unlock();
             },
@@ -90,29 +106,33 @@ pub const IrqPin = struct {
                     self.handlers.items.len == 0)
                 {
                     self.flags |= IRQ_PENDING;
-                    self.setMask(true);
-                    self.eoi();
+                    setMask(self, true);
+                    eoi(self);
 
                     self.lock.unlock();
                     return;
                 }
 
-                self.eoi();
-                self.handleIrq();
+                eoi(self);
+                self.handleIrq(frame);
             },
             else => @panic("unknown IRQ type!"),
         }
     }
 
-    pub fn setup(self: *IrqPin, name: []const u8, level: bool, high_trig: bool) void {
-        self.name = name;
-        self.kind = self.configure(level, high_trig);
-        self.handlers = std.ArrayList(IrqHandler).init(allocator());
+    pub fn attach(self: *IrqPin, handler: *IrqHandler) !void {
+        handler.pin = self;
+
+        if (self.kind == .none)
+            self.configure(self);
+
+        try self.handlers.append(handler);
     }
 
-    pub fn attach(self: *IrqPin, handler: *IrqHandler) void {
-        handler.pin = self;
-        self.handlers.append(&handler.link);
+    pub fn init(self: *IrqPin, name: []const u8, context: ?*anyopaque) void {
+        self.name = name;
+        self.context = context orelse undefined;
+        self.handlers = std.ArrayList(*IrqHandler).init(allocator());
     }
 };
 
@@ -134,8 +154,71 @@ pub const IrqSlot = struct {
     }
 };
 
-//pub export fn drainSoftIrqs() callconv(.C) void {
-//    while (smp.getCoreInfo().softirqs.pop()) |item| {
-//        var irq = @fieldParentPtr();
-//    }
-//}
+pub fn getIrql() u16 {
+    switch (cpu_arch) {
+        .x86_64 => {
+            return @truncate(u16, asm volatile ("mov %%cr8, %[level]"
+                : [level] "=r" (-> u64),
+            ));
+        },
+        else => @compileError("unsupported arch " ++ @tagName(cpu_arch) ++ "!"),
+    }
+}
+
+pub fn setIrql(level: u16) void {
+    switch (cpu_arch) {
+        .x86_64 => {
+            return asm volatile ("mov %[level], %%cr8"
+                :
+                : [level] "r" (@intCast(u64, level)),
+            );
+        },
+        else => @compileError("unsupported arch " ++ @tagName(cpu_arch) ++ "!"),
+    }
+}
+
+pub fn lowerIrql(new: u16) void {
+    var old = getIrql();
+    std.debug.assert(new <= old);
+
+    if (new < DPC_LEVEL and smp.getCoreInfo().dpc_ready != 0) {
+        drainDpcQueue();
+    }
+}
+
+pub fn queueDpc(item: *Dpc, cpu: ?u32) void {
+    if (getIrql() < DPC_LEVEL) {
+        // just run the DPC now...
+        setIrql(DPC_LEVEL);
+
+        item.func(item.arg);
+        setIrql(PASSIVE_LEVEL);
+        return;
+    }
+
+    var info: *smp.CoreInfo = undefined;
+
+    if (cpu != null) {
+        if (smp.findCpu(cpu.?)) |core_info| {
+            info = core_info;
+        } else {
+            return; // ???
+        }
+    } else {
+        info = smp.getCoreInfo();
+    }
+
+    info.items_mutex.lock();
+    defer info.items_mutex.unlock();
+
+    info.dpc_list.append(&item.node);
+    info.dpc_ready = 1;
+}
+
+// WARNING: this function *must* be called at DPC_LEVEL
+pub export fn drainDpcQueue() callconv(.C) void {
+    while (smp.getCoreInfo().dpc_list.pop()) |item| {
+        var dpc = @fieldParentPtr(Dpc, "node", item);
+        dpc.func(dpc.arg);
+    }
+}

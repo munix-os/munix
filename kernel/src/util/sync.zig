@@ -1,41 +1,63 @@
+const irq = @import("../dev/irq.zig");
 const atomic = @import("std").atomic;
-const arch = @import("root").arch;
 
 pub const SpinMutex = struct {
-    irq_aware: bool = true,
-    irq_state: bool = false,
-    serving: u32 = 0,
-    next: u32 = 0,
+    bits: atomic.Atomic(u8) = .{ .value = 0 },
+    irql: u16 = 0,
 
-    pub fn lock(self: *SpinMutex) void {
-        var ticket = @atomicRmw(u32, &self.next, .Add, 1, .Monotonic);
-        var irq_state = arch.intrEnabled();
+    fn lockInternal(self: *SpinMutex, old: u16, new: u16) void {
+        while (true) {
+            // ------------------------------------------------
+            // x86 Instruction | Micro ops | Base Latency
+            // ------------------------------------------------
+            // XCHG                  8           23
+            // LOCK XADD             9           18
+            // LOCK CMPXCHG          10          18
+            // LOCK CMPXCHG8B        20          19
+            // ------------------------------------------------
+            // We're optimizing for micro ops, since base
+            // latency isn't consistent across CPU families.
+            // Therefore, we go with the XCHG instruction...
+            // ------------------------------------------------
+            // Source: https://agner.org/optimize/instruction_tables.pdf
+            //
+            if (self.bits.swap(1, .Acquire) == 0) {
+                // 'self.bits.swap' translates to a XCHG
+                break;
+            }
 
-        if (self.irq_aware) {
-            arch.setIntrMode(false);
-        }
+            while (self.bits.fetchAdd(0, .Monotonic) != 0) {
+                // bump IRQL so we can recive higher prio
+                // IRQs while waiting...
+                irq.setIrql(old);
 
-        while (@atomicLoad(u32, &self.serving, .Acquire) != ticket) {
-            if (irq_state and self.irq_aware) {
-                arch.setIntrMode(true);
                 atomic.spinLoopHint();
-                arch.setIntrMode(false);
-            } else {
-                atomic.spinLoopHint();
+                irq.setIrql(new);
             }
         }
 
-        if (self.irq_aware) {
-            self.irq_state = irq_state;
-        }
+        atomic.compilerFence(.Acquire);
+        self.irql = old;
+    }
+
+    pub fn lock(self: *SpinMutex) void {
+        var old = irq.getIrql();
+        irq.setIrql(irq.DPC_LEVEL);
+
+        self.lockInternal(old, irq.DPC_LEVEL);
+    }
+
+    pub fn lockAt(self: *SpinMutex, level: u16) void {
+        var old = irq.getIrql();
+        irq.setIrql(level);
+
+        self.lockInternal(old, level);
     }
 
     pub fn unlock(self: *SpinMutex) void {
-        var irq_state = self.irq_state and self.irq_aware;
-        var cur = @atomicLoad(u32, &self.serving, .Monotonic);
-        @atomicStore(u32, &self.serving, cur + 1, .Release);
+        var irql = self.irql;
+        self.bits.store(0, .Release);
 
-        if (irq_state)
-            arch.setIntrMode(true);
+        irq.setIrql(irql);
     }
 };

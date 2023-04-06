@@ -4,7 +4,7 @@
 override MAKEFLAGS += -rR
 
 ZIGOPTS := \
-	-Doptimize=ReleaseSafe
+	-Doptimize=Debug
 
 .PHONY: all
 all: kernel

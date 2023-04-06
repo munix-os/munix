@@ -10,14 +10,19 @@ const irq = @import("../dev/irq.zig");
 const acpi = @import("../dev/acpi.zig");
 const sync = @import("../util/sync.zig");
 
-pub var io_apics: std.ArrayList(IoApic) = undefined;
 pub var slots: std.ArrayList(irq.IrqSlot) = undefined;
 pub var slots_lock: sync.SpinMutex = .{};
-var ic: LocalApic = .{};
+pub var ic: LocalApic = .{};
 
-inline fn regoff(n: usize) u32 {
-    return @intCast(u32, 0x10 + n * 2);
-}
+var io_apics: std.ArrayList(IoApic) = undefined;
+var isos: std.ArrayList(IoApicOverride) = undefined;
+
+const IoApicOverride = struct {
+    bus: u8,
+    irq: u8,
+    gsi: u32,
+    flags: u16,
+};
 
 pub const LocalApic = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
@@ -30,14 +35,21 @@ pub const LocalApic = struct {
     };
 
     // general regs
-    const REG_VER = 0x30;
-    const REG_EOI = 0xB0;
-    const REG_SPURIOUS = 0xF0;
+    pub const REG_VER = 0x30;
+    pub const REG_EOI = 0xB0;
+    pub const REG_SPURIOUS = 0xF0;
+    pub const REG_ICR0 = 0x300;
+    pub const REG_ICR1 = 0x310;
 
     // local vector table regs
-    const REG_LVT_TIMER = 0x320;
-    const REG_LVT_PMC = 0x340;
-    const REG_LVT_THERM = 0x330;
+    pub const REG_LVT_TIMER = 0x320;
+    pub const REG_LVT_PMC = 0x340;
+    pub const REG_LVT_THERM = 0x330;
+
+    // timer regs
+    pub const REG_TIMER_INIT = 0x380;
+    pub const REG_TIMER_COUNT = 0x390;
+    pub const REG_TIMER_DIV = 0x3E0;
 
     pub fn read(self: *LocalApic, reg: u32) u32 {
         return @intToPtr(*volatile u32, self.mmio_base + reg).*;
@@ -48,7 +60,7 @@ pub const LocalApic = struct {
     }
 
     pub fn getLvtPin(self: *LocalApic, kind: LvtType) *irq.IrqPin {
-        return self.lvts[@enumToInt(kind)];
+        return &self.lvts.items[@enumToInt(kind)];
     }
 
     pub fn init(self: *LocalApic) !void {
@@ -74,13 +86,12 @@ pub const LocalApic = struct {
             var kind = @intToEnum(LvtType, i);
             var pin_name = try std.fmt.allocPrint(allocator(), "lapic-lvt-{any}", .{kind});
             var pin: irq.IrqPin = .{};
+            pin.init(pin_name, null);
 
             pin = .{
-                .context = undefined,
+                .configure = &LocalApic.configure,
                 .setMask = &LocalApic.mask,
                 .eoi = &IoApic.eoi,
-                .configure = &LocalApic.configure,
-                .name = pin_name,
             };
 
             switch (kind) {
@@ -104,6 +115,15 @@ pub const LocalApic = struct {
         self.write(REG_EOI, 0);
     }
 
+    pub fn writeIcr(self: *LocalApic, value: u32, cpu: u32) void {
+        self.write(REG_ICR1, cpu << 24);
+        self.write(REG_ICR0, value);
+
+        while (self.read(REG_ICR0) & (1 << 12) != 0) {
+            asm volatile ("pause");
+        }
+    }
+
     pub fn mask(pin: *irq.IrqPin, state: bool) void {
         var reg = @ptrCast(*align(1) volatile u32, pin.context);
 
@@ -114,15 +134,10 @@ pub const LocalApic = struct {
         }
     }
 
-    pub fn configure(pin: *irq.IrqPin, level: bool, high: bool) irq.IrqType {
+    pub fn configure(pin: *irq.IrqPin) void {
         var reg = @ptrCast(*align(1) volatile u32, pin.context);
         var flags: u32 = 0;
         var vec: u32 = 0;
-
-        // according to the Intel SDM (vol 3, chapter 10.5.1), all LVTs
-        // except for LINT{0/1} are permenantly edge and high triggered.
-        _ = level;
-        _ = high;
 
         slots_lock.lock();
         defer slots_lock.unlock();
@@ -139,7 +154,10 @@ pub const LocalApic = struct {
             @panic("Out of IRQ vectors! (LAPIC)");
 
         reg.* |= vec | flags;
-        return .edge;
+
+        // according to the Intel SDM (vol 3, chapter 10.5.1), all LVTs
+        // except for LINT{0/1} are permenantly edge and high triggered.
+        pin.kind = .edge;
     }
 };
 
@@ -184,16 +202,10 @@ pub const IoApic = struct {
         ic.submitEoi(0);
     }
 
-    pub fn configure(pin: *irq.IrqPin, level: bool, high: bool) irq.IrqType {
+    pub fn configure(pin: *irq.IrqPin) void {
         const pctx = @ptrCast(*align(1) PinContext, pin.context);
-        var flags: u32 = 0;
+        var flags: u32 = checkOverrides(pin);
         var vec: u32 = 0;
-
-        if (level)
-            flags |= (1 << 15);
-
-        if (!high)
-            flags |= (1 << 13);
 
         slots_lock.lock();
         defer slots_lock.unlock();
@@ -210,10 +222,12 @@ pub const IoApic = struct {
             @panic("Out of IRQ vectors! (IO-APIC)");
 
         pctx.parent.write(regoff(pctx.index), flags | vec);
-        if (level)
-            return .level;
 
-        return .edge;
+        if (flags & (1 << 15) != 0) {
+            pin.kind = .level;
+        } else {
+            pin.kind = .edge;
+        }
     }
 
     pub fn setup(self: *IoApic) !void {
@@ -228,7 +242,8 @@ pub const IoApic = struct {
         for (0..self.pin_count) |i| {
             var pin_name = try std.fmt.allocPrint(allocator(), "ioapic-{}-{}", .{ self.gsi_base, i });
             var context = try allocator().create(PinContext);
-            var pin: irq.IrqPin = undefined;
+            var pin: irq.IrqPin = .{};
+            pin.init(pin_name, context);
 
             context.* = .{
                 .parent = self,
@@ -236,11 +251,9 @@ pub const IoApic = struct {
             };
 
             pin = .{
-                .context = context,
+                .configure = &IoApic.configure,
                 .setMask = &IoApic.mask,
                 .eoi = &IoApic.eoi,
-                .configure = &IoApic.configure,
-                .name = pin_name,
             };
 
             try self.pins.append(pin);
@@ -248,11 +261,37 @@ pub const IoApic = struct {
     }
 };
 
+inline fn regoff(n: usize) u32 {
+    return @intCast(u32, 0x10 + n * 2);
+}
+
+fn checkOverrides(pin: *irq.IrqPin) u32 {
+    const pctx = @ptrCast(*align(1) IoApic.PinContext, pin.context);
+    const num = pctx.index + pctx.parent.gsi_base;
+
+    for (isos.items) |iso| {
+        if (iso.gsi == num)
+            return iso.flags;
+    }
+
+    return 0;
+}
+
+pub fn submitIpi(cpu: ?u32) void {
+    if (cpu == null) {
+        ic.writeIcr(0xFE | (1 << 19), 0);
+    } else {
+        ic.writeIcr(0xFE, cpu.?);
+    }
+}
+
 pub fn init() !void {
-    // create the pins, and set the lower 31 as reserved
+    isos = std.ArrayList(IoApicOverride).init(allocator());
     io_apics = std.ArrayList(IoApic).init(allocator());
     slots = std.ArrayList(irq.IrqSlot).init(allocator());
-    for (0..256) |i| {
+
+    // create the pins, and set the lower 31 as reserved
+    for (0..254) |i| {
         if (i <= 31) {
             try slots.append(.{ .active = true });
         } else {
@@ -282,6 +321,14 @@ pub fn init() !void {
 
                 try io_apics.items[io_apics.items.len - 1].setup();
             },
+            2 => { // ISO (Interrupt Source Override)
+                try isos.append(.{
+                    .bus = data[0],
+                    .irq = data[1],
+                    .gsi = std.mem.readIntNative(u32, data[2..6]),
+                    .flags = std.mem.readIntNative(u16, data[6..8]),
+                });
+            },
             else => {},
         }
 
@@ -289,6 +336,9 @@ pub fn init() !void {
     }
 
     try ic.init();
+
+    // enable interrupts (for kernel init smpcalls)
+    asm volatile ("sti");
 }
 
 pub fn enable() void {

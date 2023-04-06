@@ -1,26 +1,24 @@
 const std = @import("std");
+const pmm = @import("../pmm.zig");
+const vmm = @import("../vmm.zig");
+const smp = @import("../smp.zig");
 const sync = @import("../util/sync.zig");
-const logger = std.log.scoped(.arch);
 
 // modules
 pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
 pub const cpu = @import("cpu.zig");
 pub const ic = @import("apic.zig");
+pub const timer = @import("timer.zig");
 
 // globals
+const logger = std.log.scoped(.arch);
 var gdt_lock = sync.SpinMutex{};
 var gdt_table = GDT{};
 
 pub const Descriptor = extern struct {
     size: u16 align(1),
     ptr: u64 align(1),
-};
-
-pub const Irql = enum(u4) {
-    passive,
-    active,
-    nopreempt,
 };
 
 const CpuidResult = struct {
@@ -130,19 +128,12 @@ pub fn intrEnabled() bool {
     return ((eflags & 0x200) != 0);
 }
 
-pub fn setIntrMode(enabled: bool) void {
+pub fn setIntrFlag(enabled: bool) void {
     if (enabled) {
         asm volatile ("sti");
     } else {
         asm volatile ("cli");
     }
-}
-
-pub fn setIrql(level: Irql) void {
-    asm volatile ("mov %[level], %%cr8"
-        :
-        : [level] "r" (@enumToInt(level)),
-    );
 }
 
 pub fn loadTSS(tss: *TSS) void {
@@ -230,6 +221,45 @@ pub inline fn rdcr0() usize {
     );
 }
 
+pub fn in(comptime T: type, port: u16) T {
+    return switch (T) {
+        u8 => asm volatile ("inb %[port], %[result]"
+            : [result] "={al}" (-> T),
+            : [port] "N{dx}" (port),
+        ),
+        u16 => asm volatile ("inw %[port], %[result]"
+            : [result] "={ax}" (-> T),
+            : [port] "N{dx}" (port),
+        ),
+        u32 => asm volatile ("inl %[port], %[result]"
+            : [result] "={eax}" (-> T),
+            : [port] "N{dx}" (port),
+        ),
+        else => @compileError("unsupported type for PIO read: " ++ @typeName(T)),
+    };
+}
+
+pub fn out(comptime T: type, port: u16, data: T) void {
+    switch (T) {
+        u8 => asm volatile ("outb %[data], %[port]"
+            :
+            : [port] "N{dx}" (port),
+              [data] "{al}" (data),
+        ),
+        u16 => asm volatile ("outw %[data], %[port]"
+            :
+            : [port] "N{dx}" (port),
+              [data] "{ax}" (data),
+        ),
+        u32 => asm volatile ("outl %[data], %[port]"
+            :
+            : [port] "N{dx}" (port),
+              [data] "{eax}" (data),
+        ),
+        else => @compileError("unsupported type for PIO write: " ++ @typeName(T)),
+    }
+}
+
 pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
     var eax: u32 = 0;
     var ebx: u32 = 0;
@@ -255,6 +285,23 @@ pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
     };
 }
 
+fn createKernelStack() ?u64 {
+    if (pmm.allocPages(4)) |page| {
+        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
+    } else {
+        return null;
+    }
+}
+
+pub fn setupCore(info: *smp.CoreInfo) void {
+    info.tss = .{
+        .rsp0 = createKernelStack().?,
+    };
+
+    // load the TSS
+    loadTSS(&info.tss);
+}
+
 pub fn init() void {
     gdt_table.load();
     trap.load();
@@ -262,5 +309,5 @@ pub fn init() void {
 }
 
 pub fn lateInit() !void {
-    try cpu.addTscCounter();
+    try timer.init();
 }

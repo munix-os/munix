@@ -1,13 +1,14 @@
 const std = @import("std");
 const arch = @import("arch.zig");
+const apic = @import("apic.zig");
+const smp = @import("../smp.zig");
 const log = std.log.scoped(.trap).err;
+
+var entries: [256]Entry = undefined;
+var entries_generated: bool = false;
 
 const TrapStub = *const fn () callconv(.Naked) void;
 const TrapHandler = *const fn (*TrapFrame) callconv(.C) void;
-
-export var handlers = [_]TrapHandler{handleException} ** 32 ++ [_]TrapHandler{handleIrq} ** 224;
-var entries: [256]Entry = undefined;
-var entries_generated: bool = false;
 
 pub const TrapFrame = extern struct {
     rax: u64,
@@ -71,10 +72,6 @@ const Entry = packed struct {
     }
 };
 
-pub fn setHandler(func: anytype, vec: u8) void {
-    handlers[vec] = func;
-}
-
 pub fn load() void {
     const idtr = arch.Descriptor{
         .size = @as(u16, (@sizeOf(Entry) * 256) - 1),
@@ -95,15 +92,16 @@ pub fn load() void {
     );
 }
 
-fn handleIrq(frame: *TrapFrame) callconv(.C) void {
-    log("CPU triggered IRQ #{}, which has no handler!", .{frame.vec});
-
-    while (true) {
-        asm volatile ("hlt");
-    }
+pub export fn handleIpi(frame: *TrapFrame) callconv(.C) void {
+    _ = frame;
+    smp.handleIpi();
 }
 
-fn handleException(frame: *TrapFrame) callconv(.C) void {
+pub export fn handleIrq(frame: *TrapFrame) callconv(.C) void {
+    apic.slots.items[frame.vec].trigger(frame);
+}
+
+pub export fn handleException(frame: *TrapFrame) callconv(.C) void {
     log("CPU Exception #{}: ", .{frame.vec});
     frame.dump(log);
 
@@ -136,13 +134,18 @@ fn makeStub(comptime vec: u8) TrapStub {
                 else => false,
             };
 
+            if (vec == 0xFF) {
+                asm volatile ("iretq");
+                return;
+            }
+
             if (!comptime (has_ec)) {
                 asm volatile ("push $0");
             }
 
             asm volatile ("push %[vec]"
                 :
-                : [vec] "i" (vec),
+                : [vec] "i" (@as(u64, vec)),
             );
 
             // zig fmt: off
@@ -171,13 +174,20 @@ fn makeStub(comptime vec: u8) TrapStub {
                 \\push %rax
                 \\cld
 
-                // setup C enviroment and index into the handler
-                \\lea handlers(%rip), %rbx
-                \\add %[vec_off], %rbx
+                // setup C enviorment
                 \\mov %rsp, %rdi
                 \\xor %rbp, %rbp
-                \\call *(%rbx)
+            );
 
+            if (vec < 32) {
+                asm volatile ("callq handleException");
+            } else if (vec == 0xFE) {
+                asm volatile ("callq handleIpi");
+            } else {
+                asm volatile ("callq handleIrq");
+            }
+
+            asm volatile (
                 // pop the trapframe back into place
                 \\pop %rax
                 \\pop %rbx
@@ -204,8 +214,6 @@ fn makeStub(comptime vec: u8) TrapStub {
                 // and away we go :-)
                 \\1:
                 \\iretq
-                :
-                : [vec_off] "i" (@as(u64, vec) * 8),
             );
         }
     }.stub;
