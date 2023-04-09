@@ -1,14 +1,13 @@
 const std = @import("std");
 const arch = @import("arch.zig");
 const apic = @import("apic.zig");
-const smp = @import("../smp.zig");
-const log = std.log.scoped(.trap).err;
+const logger = std.log.scoped(.trap);
 
-var entries: [256]Entry = undefined;
 var entries_generated: bool = false;
+var entries: [256]Entry = undefined;
 
-const TrapStub = *const fn () callconv(.Naked) void;
 const TrapHandler = *const fn (*TrapFrame) callconv(.C) void;
+const TrapStub = *const fn () callconv(.Naked) void;
 
 pub const TrapFrame = extern struct {
     rax: u64,
@@ -42,12 +41,14 @@ pub const TrapFrame = extern struct {
         log_func("R13: {X:0>16} - R14: {X:0>16} - R15: {X:0>16}", .{ self.r13, self.r14, self.r15 });
         log_func("RSP: {X:0>16} - RIP: {X:0>16} - CS:  {X:0>16}", .{ self.rsp, self.rip, self.cs });
 
-        var cr2 = asm volatile ("mov %%cr2, %[out]"
-            : [out] "=r" (-> u64),
-            :
-            : "memory"
-        );
-        log_func("Linear Address: 0x{X:0>16}, EC bits: 0x{X:0>8}", .{ cr2, self.error_code });
+        if (self.error_code == 14) {
+            var cr2 = asm volatile ("mov %%cr2, %[out]"
+                : [out] "=r" (-> u64),
+                :
+                : "memory"
+            );
+            logger.err("Linear Address: 0x{X:0>16}, EC bits: 0x{X:0>8}", .{ cr2, self.error_code });
+        }
     }
 };
 
@@ -92,18 +93,13 @@ pub fn load() void {
     );
 }
 
-pub export fn handleIpi(frame: *TrapFrame) callconv(.C) void {
-    _ = frame;
-    smp.handleIpi();
-}
-
 pub export fn handleIrq(frame: *TrapFrame) callconv(.C) void {
-    apic.slots.items[frame.vec].trigger(frame);
+    arch.triggerSlot(@truncate(u32, frame.vec), frame);
 }
 
 pub export fn handleException(frame: *TrapFrame) callconv(.C) void {
-    log("CPU Exception #{}: ", .{frame.vec});
-    frame.dump(log);
+    logger.err("CPU Exception #{}: ", .{frame.vec});
+    frame.dump(logger.err);
 
     while (true) {
         asm volatile ("hlt");
@@ -181,8 +177,6 @@ fn makeStub(comptime vec: u8) TrapStub {
 
             if (vec < 32) {
                 asm volatile ("callq handleException");
-            } else if (vec == 0xFE) {
-                asm volatile ("callq handleIpi");
             } else {
                 asm volatile ("callq handleIrq");
             }

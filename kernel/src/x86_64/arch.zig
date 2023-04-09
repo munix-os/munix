@@ -1,7 +1,7 @@
 const std = @import("std");
 const pmm = @import("../pmm.zig");
 const vmm = @import("../vmm.zig");
-const smp = @import("../smp.zig");
+const irq = @import("../dev/irq.zig");
 const sync = @import("../util/sync.zig");
 
 // modules
@@ -9,11 +9,11 @@ pub const trap = @import("trap.zig");
 pub const paging = @import("paging.zig");
 pub const cpu = @import("cpu.zig");
 pub const ic = @import("apic.zig");
-pub const timer = @import("timer.zig");
 
 // globals
 const logger = std.log.scoped(.arch);
-var gdt_lock = sync.SpinMutex{};
+var slots: [256]irq.IrqSlot = [_]irq.IrqSlot{.{}} ** 256;
+var arch_lock = sync.SpinMutex{};
 var gdt_table = GDT{};
 
 pub const Descriptor = extern struct {
@@ -137,8 +137,8 @@ pub fn setIntrFlag(enabled: bool) void {
 }
 
 pub fn loadTSS(tss: *TSS) void {
-    gdt_lock.lock();
-    defer gdt_lock.unlock();
+    arch_lock.lock();
+    defer arch_lock.unlock();
 
     var addr: u64 = @ptrToInt(tss);
 
@@ -285,29 +285,37 @@ pub fn cpuid(leaf: u32, subleaf: u32) CpuidResult {
     };
 }
 
-fn createKernelStack() ?u64 {
-    if (pmm.allocPages(4)) |page| {
-        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
-    } else {
-        return null;
-    }
+pub fn triggerSlot(vec: u32, frame: *trap.TrapFrame) void {
+    slots[vec].trigger(frame);
 }
 
-pub fn setupCore(info: *smp.CoreInfo) void {
-    info.tss = .{
-        .rsp0 = createKernelStack().?,
-    };
+pub fn registerIrqPin(slot_idx: ?u32, pin: *irq.IrqPin) !u32 {
+    arch_lock.lock();
+    defer arch_lock.unlock();
 
-    // load the TSS
-    loadTSS(&info.tss);
+    if (slot_idx == null) {
+        for (slots, 0..) |slot, i| {
+            if (slot.active)
+                continue;
+
+            slots[i].link(pin);
+            return @intCast(u32, i);
+        }
+    } else if (!slots[slot_idx.?].active) {
+        slots[slot_idx.?].link(pin);
+        return slot_idx.?;
+    }
+
+    return error.IrqResourceBusy;
 }
 
 pub fn init() void {
     gdt_table.load();
     trap.load();
     cpu.init();
-}
 
-pub fn lateInit() !void {
-    try timer.init();
+    // mark the lower 31 IRQs as reserved
+    for (0..32) |i| {
+        slots[i].active = true;
+    }
 }

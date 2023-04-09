@@ -5,17 +5,13 @@ const sink = std.log.scoped(.apic);
 // imports
 const arch = @import("arch.zig");
 const vmm = @import("../vmm.zig");
-const smp = @import("../smp.zig");
 const irq = @import("../dev/irq.zig");
 const acpi = @import("../dev/acpi.zig");
 const sync = @import("../util/sync.zig");
 
-pub var slots: std.ArrayList(irq.IrqSlot) = undefined;
-pub var slots_lock: sync.SpinMutex = .{};
-pub var ic: LocalApic = .{};
-
 var io_apics: std.ArrayList(IoApic) = undefined;
 var isos: std.ArrayList(IoApicOverride) = undefined;
+pub var ic: LocalApic = .{};
 
 const IoApicOverride = struct {
     bus: u8,
@@ -26,7 +22,7 @@ const IoApicOverride = struct {
 
 pub const LocalApic = struct {
     mmio_base: u64 = 0xFFFF8000FEE00000,
-    lvts: std.ArrayList(irq.IrqPin) = undefined,
+    lvts: []irq.IrqPin = undefined,
 
     pub const LvtType = enum(u4) {
         timer = 1,
@@ -64,7 +60,7 @@ pub const LocalApic = struct {
     }
 
     pub fn init(self: *LocalApic) !void {
-        self.lvts = std.ArrayList(irq.IrqPin).init(allocator());
+        self.lvts = try allocator().alloc(irq.IrqPin, 3);
 
         var mmio_base = vmm.toHigherHalf(arch.rdmsr(0x1B) & 0xFFFFF000);
         if (mmio_base != self.mmio_base) {
@@ -85,22 +81,20 @@ pub const LocalApic = struct {
         for (1..4) |i| {
             var kind = @intToEnum(LvtType, i);
             var pin_name = try std.fmt.allocPrint(allocator(), "lapic-lvt-{any}", .{kind});
-            var pin: irq.IrqPin = .{};
-            pin.init(pin_name, null);
 
-            pin = .{
+            self.lvts[i - 1] = .{
                 .configure = &LocalApic.configure,
                 .setMask = &LocalApic.mask,
                 .eoi = &IoApic.eoi,
             };
 
-            switch (kind) {
-                .timer => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_TIMER),
-                .perf => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_PMC),
-                .thermal => pin.context = @intToPtr(*u32, self.mmio_base + REG_LVT_THERM),
-            }
+            self.lvts[i - 1].init(pin_name, null);
 
-            try self.lvts.append(pin);
+            switch (kind) {
+                .timer => self.lvts[i - 1].context = @intToPtr(*u32, self.mmio_base + REG_LVT_TIMER),
+                .perf => self.lvts[i - 1].context = @intToPtr(*u32, self.mmio_base + REG_LVT_PMC),
+                .thermal => self.lvts[i - 1].context = @intToPtr(*u32, self.mmio_base + REG_LVT_THERM),
+            }
         }
     }
 
@@ -137,21 +131,10 @@ pub const LocalApic = struct {
     pub fn configure(pin: *irq.IrqPin) void {
         var reg = @ptrCast(*align(1) volatile u32, pin.context);
         var flags: u32 = 0;
-        var vec: u32 = 0;
 
-        slots_lock.lock();
-        defer slots_lock.unlock();
-
-        for (slots.items, 0..) |slot, i| {
-            if (slot.active)
-                continue;
-
-            slots.items[i].link(pin);
-            vec = @intCast(u32, i);
-        }
-
-        if (vec == 0)
-            @panic("Out of IRQ vectors! (LAPIC)");
+        var vec: u32 = arch.registerIrqPin(null, pin) catch {
+            @panic("apic: OUT OF IRQ SLOTS!!!");
+        };
 
         reg.* |= vec | flags;
 
@@ -162,7 +145,8 @@ pub const LocalApic = struct {
 };
 
 pub const IoApic = struct {
-    pins: std.ArrayList(irq.IrqPin) = undefined,
+    pins: []irq.IrqPin = undefined,
+    pins_lock: sync.SpinMutex = .{},
     mmio_base: u64 = 0,
     gsi_base: u32 = 0,
     pin_count: u32 = 0,
@@ -205,21 +189,10 @@ pub const IoApic = struct {
     pub fn configure(pin: *irq.IrqPin) void {
         const pctx = @ptrCast(*align(1) PinContext, pin.context);
         var flags: u32 = checkOverrides(pin);
-        var vec: u32 = 0;
 
-        slots_lock.lock();
-        defer slots_lock.unlock();
-
-        for (slots.items, 0..) |slot, i| {
-            if (slot.active)
-                continue;
-
-            slots.items[i].link(pin);
-            vec = @intCast(u32, i);
-        }
-
-        if (vec == 0)
-            @panic("Out of IRQ vectors! (IO-APIC)");
+        var vec: u32 = arch.registerIrqPin(null, pin) catch {
+            @panic("apic: OUT OF IRQ SLOTS!!!");
+        };
 
         pctx.parent.write(regoff(pctx.index), flags | vec);
 
@@ -231,8 +204,9 @@ pub const IoApic = struct {
     }
 
     pub fn setup(self: *IoApic) !void {
-        self.pins = std.ArrayList(irq.IrqPin).init(allocator());
         self.pin_count = ((self.read(REG_VER) >> 16) & 0xFF) + 1;
+        self.pins = try allocator().alloc(irq.IrqPin, self.pin_count);
+
         sink.debug("IO-APIC({}): a total of {} pins supported (base={})", .{
             io_apics.items.len - 1,
             self.pin_count,
@@ -242,27 +216,89 @@ pub const IoApic = struct {
         for (0..self.pin_count) |i| {
             var pin_name = try std.fmt.allocPrint(allocator(), "ioapic-{}-{}", .{ self.gsi_base, i });
             var context = try allocator().create(PinContext);
-            var pin: irq.IrqPin = .{};
-            pin.init(pin_name, context);
+            self.pins[i] = .{
+                .configure = &IoApic.configure,
+                .setMask = &IoApic.mask,
+                .eoi = &IoApic.eoi,
+            };
+            self.pins[i].init(pin_name, context);
 
             context.* = .{
                 .parent = self,
                 .index = i,
             };
-
-            pin = .{
-                .configure = &IoApic.configure,
-                .setMask = &IoApic.mask,
-                .eoi = &IoApic.eoi,
-            };
-
-            try self.pins.append(pin);
         }
     }
 };
 
+pub fn getIoApicPin(comptime search: bool, comptime isa_irq: bool, idx: u32) !struct { pin: *irq.IrqPin, idx: u32 } {
+    var base: usize = 0;
+
+    if (search and isa_irq)
+        @compileError("searching for a ISA IRQ isn't possible!");
+
+    if (search) {
+        for (0..io_apics.items.len) |i| {
+            var io_apic = io_apics.items[i];
+
+            io_apic.pins_lock.lock();
+            defer io_apic.pins_lock.unlock();
+
+            for (base..io_apic.pin_count) |j| {
+                if (io_apic.pins[j].kind == .none) {
+                    return .{
+                        .pin = &io_apic.pins[j],
+                        .idx = @intCast(u32, j),
+                    };
+                }
+            }
+
+            base += io_apic.pin_count;
+        }
+
+        return error.IrqResourceBusy;
+    } else {
+        var ridx = blk: {
+            if (isa_irq) {
+                break :blk findIsaIrq(idx);
+            } else {
+                break :blk idx;
+            }
+        };
+
+        for (0..io_apics.items.len) |i| {
+            var io_apic = io_apics.items[i];
+
+            io_apic.pins_lock.lock();
+            defer io_apic.pins_lock.unlock();
+
+            for (base..io_apic.pin_count) |j| {
+                if (ridx == j) {
+                    return .{
+                        .pin = &io_apic.pins[ridx],
+                        .idx = @intCast(u32, ridx),
+                    };
+                }
+            }
+
+            base += io_apic.pin_count;
+        }
+
+        return error.NotFound;
+    }
+}
+
 inline fn regoff(n: usize) u32 {
     return @intCast(u32, 0x10 + n * 2);
+}
+
+fn findIsaIrq(index: u32) u32 {
+    for (isos.items) |iso| {
+        if (iso.irq == index)
+            return iso.gsi;
+    }
+
+    return @intCast(u32, index);
 }
 
 fn checkOverrides(pin: *irq.IrqPin) u32 {
@@ -288,16 +324,6 @@ pub fn submitIpi(cpu: ?u32) void {
 pub fn init() !void {
     isos = std.ArrayList(IoApicOverride).init(allocator());
     io_apics = std.ArrayList(IoApic).init(allocator());
-    slots = std.ArrayList(irq.IrqSlot).init(allocator());
-
-    // create the pins, and set the lower 31 as reserved
-    for (0..254) |i| {
-        if (i <= 31) {
-            try slots.append(.{ .active = true });
-        } else {
-            try slots.append(.{});
-        }
-    }
 
     // parse the MADT for IO-APIC entries
     var madt = acpi.getTable("APIC") orelse @panic("Unable to find MADT (required for boot)");

@@ -3,7 +3,6 @@ const limine = @import("limine");
 const sink = std.log.scoped(.acpi);
 
 const vmm = @import("../vmm.zig");
-const clock = @import("clock.zig");
 const arch = @import("root").arch;
 const allocator = @import("root").allocator;
 
@@ -109,22 +108,8 @@ pub export var rsdp_request: limine.RsdpRequest = .{};
 var xsdt: ?*Header = null;
 var rsdt: ?*Header = null;
 
-var acpi_pm_tc: clock.TimeCounter = .{
-    .name = "ACPI PM Timer",
-    .quality = 600,
-    .bits = 0,
-    .frequency = 3580,
-    .priv = undefined,
-    .getValue = &pmTimerRead,
-};
-
 fn getEntries(comptime T: type, header: *Header) []align(1) const T {
     return std.mem.bytesAsSlice(T, header.getContents());
-}
-
-fn pmTimerRead(tc: *clock.TimeCounter) u64 {
-    var timer_block = @ptrCast(*align(1) GenericAddress, tc.priv);
-    return timer_block.read(u32);
 }
 
 fn printTable(sdt: *Header) void {
@@ -192,45 +177,5 @@ pub fn init() !void {
             var entry = @intToPtr(*Header, vmm.toHigherHalf(ent));
             printTable(entry);
         }
-    }
-
-    // setup the ACPI timer
-    if (getTable("FACP")) |fadt_sdt| {
-        var fadt = @ptrCast(*align(1) const FADT, fadt_sdt.getContents()[0..]);
-        var timer_block = try allocator().create(GenericAddress);
-
-        if (xsdp.revision >= 2 and fadt.x_pm_timer_blk.base_type == 0) {
-            timer_block.* = fadt.x_pm_timer_blk;
-            timer_block.base = vmm.toHigherHalf(timer_block.base);
-        } else {
-            if (fadt.pm_timer_blk == 0 or fadt.pm_timer_length != 4) {
-                @panic("ACPI Timer is unsupported/malformed");
-            }
-
-            timer_block.* = GenericAddress{
-                .base = fadt.pm_timer_blk,
-                .base_type = 1,
-                .bit_width = 32,
-                .bit_offset = 0,
-                .access_size = 0,
-            };
-        }
-
-        if ((fadt.flags & (1 << 8)) == 0) {
-            acpi_pm_tc.bits = 32;
-        } else {
-            acpi_pm_tc.bits = 24;
-        }
-
-        if (timer_block.base_type == 0) {
-            sink.info("detected MMIO acpi timer, with {}-bit counter width", .{acpi_pm_tc.bits});
-        } else {
-            sink.info("detected PIO (Port IO) acpi timer, with {}-bit counter width", .{acpi_pm_tc.bits});
-        }
-
-        acpi_pm_tc.priv = timer_block;
-        try clock.register(&acpi_pm_tc);
-    } else {
-        return error.InvalidHardware;
     }
 }

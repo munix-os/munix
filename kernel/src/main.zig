@@ -8,7 +8,6 @@ const sync = @import("util/sync.zig");
 const dev = @import("dev/dev.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
-const smp = @import("smp.zig");
 const vfs = @import("vfs.zig");
 
 var g_alloc = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true, .MutexType = sync.SpinMutex }){};
@@ -32,11 +31,11 @@ pub const os = .{
 };
 
 var log_buffer: [16 * 4096]u8 = undefined;
-var log_lock = sync.SpinMutex{};
 var limine_terminal_cr3: u64 = 0;
+var log_lock = sync.SpinMutex{};
 
 pub const std_options = struct {
-    pub const log_level = .debug;
+    pub const log_level = .info;
     pub const logFn = log;
 };
 
@@ -115,6 +114,5 @@ fn kernel_main() !void {
     try pmm.init();
     try vmm.init();
     try dev.init();
-    try smp.init();
-    try arch.lateInit();
+    try arch.ic.init();
 }

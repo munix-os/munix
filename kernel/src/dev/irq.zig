@@ -1,5 +1,4 @@
 const std = @import("std");
-const smp = @import("../smp.zig");
 const sync = @import("../util/sync.zig");
 
 const trap = @import("root").arch.trap;
@@ -31,6 +30,8 @@ pub const Dpc = struct {
     node: std.TailQueue(void).Node = undefined,
     func: *const fn (*anyopaque) void = undefined,
     arg: *anyopaque = undefined,
+
+    lock: ?*sync.SpinMutex = null,
 };
 
 pub const IrqHandler = struct {
@@ -73,7 +74,7 @@ pub const IrqPin = struct {
         const setMask = self.setMask;
         const eoi = self.eoi;
 
-        if (@atomicLoad(IrqType, &self.kind, .SeqCst) == .smpirq) {
+        if (self.kind == .smpirq) {
             // take the SMP fastpath
             self.handleIrqSmp(frame);
 
@@ -98,8 +99,6 @@ pub const IrqPin = struct {
 
                 if (self.flags & (IRQ_DISABLED | IRQ_MASKED) == 0)
                     setMask(self, false);
-
-                self.lock.unlock();
             },
             .edge => {
                 if (self.flags & IRQ_DISABLED != 0 or
@@ -118,10 +117,15 @@ pub const IrqPin = struct {
             },
             else => @panic("unknown IRQ type!"),
         }
+
+        self.lock.unlock();
     }
 
     pub fn attach(self: *IrqPin, handler: *IrqHandler) !void {
         handler.pin = self;
+
+        self.lock.lock();
+        defer self.lock.unlock();
 
         if (self.kind == .none)
             self.configure(self);
@@ -174,51 +178,5 @@ pub fn setIrql(level: u16) void {
             );
         },
         else => @compileError("unsupported arch " ++ @tagName(cpu_arch) ++ "!"),
-    }
-}
-
-pub fn lowerIrql(new: u16) void {
-    var old = getIrql();
-    std.debug.assert(new <= old);
-
-    if (new < DPC_LEVEL and smp.getCoreInfo().dpc_ready != 0) {
-        drainDpcQueue();
-    }
-}
-
-pub fn queueDpc(item: *Dpc, cpu: ?u32) void {
-    if (getIrql() < DPC_LEVEL) {
-        // just run the DPC now...
-        setIrql(DPC_LEVEL);
-
-        item.func(item.arg);
-        setIrql(PASSIVE_LEVEL);
-        return;
-    }
-
-    var info: *smp.CoreInfo = undefined;
-
-    if (cpu != null) {
-        if (smp.findCpu(cpu.?)) |core_info| {
-            info = core_info;
-        } else {
-            return; // ???
-        }
-    } else {
-        info = smp.getCoreInfo();
-    }
-
-    info.items_mutex.lock();
-    defer info.items_mutex.unlock();
-
-    info.dpc_list.append(&item.node);
-    info.dpc_ready = 1;
-}
-
-// WARNING: this function *must* be called at DPC_LEVEL
-pub export fn drainDpcQueue() callconv(.C) void {
-    while (smp.getCoreInfo().dpc_list.pop()) |item| {
-        var dpc = @fieldParentPtr(Dpc, "node", item);
-        dpc.func(dpc.arg);
     }
 }
