@@ -6,6 +6,7 @@ const logger = std.log.scoped(.main);
 pub const arch = @import("x86_64/arch.zig");
 const sync = @import("util/sync.zig");
 const dev = @import("dev/dev.zig");
+const smp = @import("smp.zig");
 const pmm = @import("pmm.zig");
 const vmm = @import("vmm.zig");
 const vfs = @import("vfs.zig");
@@ -97,6 +98,8 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, return_
 
 export fn entry() callconv(.C) noreturn {
     limine_terminal_cr3 = arch.paging.saveSpace();
+    dev.irq.setIrql(dev.irq.DPC_LEVEL);
+
     logger.info("hello from munix!", .{});
 
     kernel_main() catch |e| {
@@ -114,5 +117,5 @@ fn kernel_main() !void {
     try pmm.init();
     try vmm.init();
     try dev.init();
-    try arch.ic.init();
+    try smp.init();
 }

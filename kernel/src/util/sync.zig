@@ -5,7 +5,7 @@ pub const SpinMutex = struct {
     bits: atomic.Atomic(u8) = .{ .value = 0 },
     irql: u16 = 0,
 
-    fn lockInternal(self: *SpinMutex, old: u16, new: u16) void {
+    fn lockInternal(self: *SpinMutex, old: u16) void {
         while (true) {
             // ------------------------------------------------
             // x86 Instruction | Micro ops | Base Latency
@@ -27,12 +27,7 @@ pub const SpinMutex = struct {
             }
 
             while (self.bits.fetchAdd(0, .Monotonic) != 0) {
-                // bump IRQL so we can recive higher prio
-                // IRQs while waiting...
-                irq.setIrql(old);
-
                 atomic.spinLoopHint();
-                irq.setIrql(new);
             }
         }
 
@@ -42,22 +37,22 @@ pub const SpinMutex = struct {
 
     pub fn lock(self: *SpinMutex) void {
         var old = irq.getIrql();
-        irq.setIrql(irq.DPC_LEVEL);
+        _ = irq.raiseIrql(irq.DPC_LEVEL);
 
-        self.lockInternal(old, irq.DPC_LEVEL);
+        self.lockInternal(old);
     }
 
     pub fn lockAt(self: *SpinMutex, level: u16) void {
         var old = irq.getIrql();
-        irq.setIrql(level);
+        _ = irq.raiseIrql(level);
 
-        self.lockInternal(old, level);
+        self.lockInternal(old);
     }
 
     pub fn unlock(self: *SpinMutex) void {
         var irql = self.irql;
         self.bits.store(0, .Release);
 
-        irq.setIrql(irql);
+        _ = irq.lowerIrql(irql);
     }
 };

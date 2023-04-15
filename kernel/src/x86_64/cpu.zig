@@ -3,6 +3,7 @@ const sink = std.log.scoped(.cpu);
 
 const arch = @import("arch.zig");
 const trap = @import("trap.zig");
+const smp = @import("../smp.zig");
 
 const SaveType = enum {
     fxsave,
@@ -159,8 +160,8 @@ pub fn fpuSave(save_area: []const u8) void {
 }
 
 pub fn printBrandName() void {
-    //if (!smp.isBsp())
-    //    return;
+    if (!smp.isBsp())
+        return;
 
     var raw_brand: [12]u32 = undefined;
     var leaf1 = arch.cpuid(0x80000002, 0);
@@ -207,9 +208,9 @@ pub fn setupFpu() void {
         wrxcr(0, @as(u64, arch.cpuid(0xD, 0).eax) & supported_mask);
         result = arch.cpuid(0xD, 0);
 
-        //if (smp.isBsp()) {
-        sink.info("supported extensions bitmask: 0x{X}", .{result.eax});
-        //}
+        if (smp.isBsp()) {
+            sink.info("supported extensions bitmask: 0x{X}", .{result.eax});
+        }
 
         switch (fpu_mode) {
             .xsave, .xsaveopt => {
@@ -229,12 +230,12 @@ pub fn setupFpu() void {
         fpu_mode = .fxsave;
     }
 
-    //if (smp.isBsp()) {
-    sink.info(
-        "using \"{s}\" instruction (with size={}) for FPU context management",
-        .{ @tagName(fpu_mode), fpu_storage_size },
-    );
-    //}
+    if (smp.isBsp()) {
+        sink.info(
+            "using \"{s}\" instruction (with size={}) for FPU context management",
+            .{ @tagName(fpu_mode), fpu_storage_size },
+        );
+    }
 }
 
 pub fn init() void {

@@ -1,6 +1,7 @@
 const std = @import("std");
 const arch = @import("arch.zig");
 const apic = @import("apic.zig");
+const smp = @import("../smp.zig");
 const logger = std.log.scoped(.trap);
 
 var entries_generated: bool = false;
@@ -93,6 +94,11 @@ pub fn load() void {
     );
 }
 
+pub export fn handleIpi(frame: *TrapFrame) callconv(.C) void {
+    _ = frame;
+    smp.handleIpi();
+}
+
 pub export fn handleIrq(frame: *TrapFrame) callconv(.C) void {
     arch.triggerSlot(@truncate(u32, frame.vec), frame);
 }
@@ -177,6 +183,8 @@ fn makeStub(comptime vec: u8) TrapStub {
 
             if (vec < 32) {
                 asm volatile ("callq handleException");
+            } else if (vec == 254) {
+                asm volatile ("callq handleIpi");
             } else {
                 asm volatile ("callq handleIrq");
             }

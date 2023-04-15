@@ -1,5 +1,6 @@
 const std = @import("std");
 const sync = @import("../util/sync.zig");
+const smp = @import("../smp.zig");
 
 const trap = @import("root").arch.trap;
 const allocator = @import("root").allocator;
@@ -18,7 +19,13 @@ pub const DEVICE_LEVEL:  u8 = 12;
 pub const CLOCK_LEVEL:   u8 = 13;
 pub const MAX_LEVEL:     u8 = 15;
 
+//
+// A minimum of 5 lazy DPCs must be queued
+// for an IRQ to be dispatched
+//
 // zig fmt: on
+pub const DPC_QUEUE_THRESH = 5;
+
 pub const IrqType = enum {
     none,
     edge,
@@ -30,6 +37,8 @@ pub const Dpc = struct {
     node: std.TailQueue(void).Node = undefined,
     func: *const fn (*anyopaque) void = undefined,
     arg: *anyopaque = undefined,
+    lazy: bool = true,
+    cpu: ?u32 = null,
 
     lock: ?*sync.SpinMutex = null,
 };
@@ -179,4 +188,83 @@ pub fn setIrql(level: u16) void {
         },
         else => @compileError("unsupported arch " ++ @tagName(cpu_arch) ++ "!"),
     }
+}
+
+pub fn raiseIrql(irql: u16) u16 {
+    const old = getIrql();
+    std.debug.assert(old <= irql);
+
+    if (old < irql)
+        setIrql(irql);
+
+    return old;
+}
+
+pub fn lowerIrql(irql: u16) u16 {
+    const old = getIrql();
+    std.debug.assert(old >= irql);
+
+    if (old > irql)
+        setIrql(irql);
+
+    // TODO: dispatch pending DPCs
+    return old;
+}
+
+pub fn flushDpcQueue(arg: ?*anyopaque) void {
+    const irql = lowerIrql(DPC_LEVEL);
+    var core_info = smp.getCoreInfo();
+    _ = arg;
+
+    while (@atomicLoad(u32, &core_info.dpc_count, .Monotonic) != 0) {
+        core_info.dpc_lock.lock();
+
+        while (true) {
+            const dpc_ptr = core_info.dpc_queue.popFirst();
+            if (dpc_ptr == null)
+                break;
+
+            var dpc = @fieldParentPtr(Dpc, "node", dpc_ptr.?);
+            dpc.func(dpc.arg);
+            dpc.lock = null;
+
+            _ = @atomicRmw(u32, &core_info.dpc_count, .Sub, 1, .Monotonic);
+        }
+
+        core_info.dpc_lock.unlock();
+    }
+
+    _ = raiseIrql(irql);
+}
+
+pub fn queueDpc(dpc: *Dpc) bool {
+    var core_info: *smp.CoreInfo = undefined;
+
+    if (dpc.cpu) |c| {
+        const cpu = smp.findCpu(c) orelse return false;
+        core_info = cpu.data;
+    } else {
+        core_info = smp.getCoreInfo();
+    }
+
+    core_info.dpc_lock.lock();
+
+    if (dpc.lock == null) {
+        dpc.lock = &core_info.dpc_lock;
+        core_info.dpc_count += 1;
+        core_info.dpc_queue.append(&dpc.node);
+        core_info.dpc_lock.unlock();
+
+        if (!dpc.lazy or core_info.dpc_count >= DPC_QUEUE_THRESH) {
+            if (core_info == smp.getCoreInfo()) {
+                flushDpcQueue(null);
+            } else {
+                smp.broadcast(flushDpcQueue, null, dpc.cpu.?);
+            }
+        }
+
+        return true;
+    }
+
+    return false;
 }

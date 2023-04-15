@@ -1,6 +1,7 @@
 const std = @import("std");
 const pmm = @import("../pmm.zig");
 const vmm = @import("../vmm.zig");
+const smp = @import("../smp.zig");
 const irq = @import("../dev/irq.zig");
 const sync = @import("../util/sync.zig");
 
@@ -309,13 +310,38 @@ pub fn registerIrqPin(slot_idx: ?u32, pin: *irq.IrqPin) !u32 {
     return error.IrqResourceBusy;
 }
 
+fn createKernelStack() ?u64 {
+    if (pmm.allocPages(4)) |page| {
+        return vmm.toHigherHalf(page + 4 * std.mem.page_size);
+    } else {
+        return null;
+    }
+}
+
+pub fn setupCore(info: *smp.CoreInfo) void {
+    info.tss = .{
+        .rsp0 = createKernelStack().?,
+    };
+
+    // load the TSS
+    loadTSS(&info.tss);
+}
+
 pub fn init() void {
     gdt_table.load();
     trap.load();
     cpu.init();
 
-    // mark the lower 31 IRQs as reserved
-    for (0..32) |i| {
-        slots[i].active = true;
+    if (smp.isBsp()) {
+        // mark the lower 31 IRQs as reserved
+        for (0..32) |i| {
+            slots[i].active = true;
+        }
+
+        // then mark the top 2 IRQs as reserved
+        slots[0xFF].active = true;
+        slots[0xFE].active = true;
+    } else {
+        ic.enable();
     }
 }
